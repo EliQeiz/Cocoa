@@ -1,0 +1,24 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { --ink:#17241c; --cocoa:#33231d; --leaf:#24714f; --ivory:#f6f4ed; --gold:#c9a25d; }
+* { box-sizing: border-box; }
+body { margin:0; color:var(--ink); background:var(--ivory); font-family: Arial, Helvetica, sans-serif; }
+button, input, select { font:inherit; }
+::-webkit-scrollbar{width:8px} ::-webkit-scrollbar-thumb{background:#d7d3c8;border-radius:10px}
+.dot-grid { background-image: radial-gradient(#d4d9cb 1px,transparent 1px); background-size: 18px 18px; }
+.map-land { background:linear-gradient(125deg,#e0e6d2 0 28%,#d0dcc4 28% 46%,#e9e2cf 46% 58%,#cfdabc 58% 75%,#e5ead9 75%); }
+
+/* Command-centre light theme: the hero intentionally remains dark for contrast. */
+.agri-light { background:#f4f7fb; color:#17243a; }
+.agri-light [class~="bg-[#0b111b]"], .agri-light [class~="bg-[#0e1622]"], .agri-light [class~="bg-[#151f2d]"], .agri-light [class~="bg-[#172130]"] { background-color:#ffffff !important; }
+.agri-light [class~="border-white/10"] { border-color:#dce5f0 !important; }
+.agri-light [class~="text-white"] { color:#14223a !important; }
+.agri-light [class~="text-slate-400"] { color:#63738a !important; }
+.agri-light [class~="text-slate-300"] { color:#43536b !important; }
+.agri-light .hero-shell [class~="text-white"] { color:white !important; }
+.agri-light .hero-shell [class~="text-slate-300"] { color:#d9e4f4 !important; }
+.agri-light header [class~="text-white"] { color:white !important; }
+.agri-light .cmd-title { background:#ffffff !important; }
+.agri-light .cmd-title [class~="text-white"] { color:#14223a !important; }
