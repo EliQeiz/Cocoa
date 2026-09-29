@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Building2, CheckCircle2, LockKeyhole, Mail, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowRight, Building2, CheckCircle2, Database, KeyRound, LockKeyhole, Mail, ShieldCheck, Sparkles } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase/client";
@@ -55,6 +55,16 @@ export default function AuthPage() {
     setMessage("Your secure link is ready. Open the newest email on this device to continue.");
   }
 
+  async function continueWithProvider(provider: "google" | "azure") {
+    setStatus("sending");
+    setMessage("");
+    const { error } = await supabase.auth.signInWithOAuth({ provider, options: { redirectTo: `${callbackOrigin}/auth` } });
+    if (error) {
+      setStatus("error");
+      setMessage(error.message);
+    }
+  }
+
   return (
     <main className="auth-scene">
       <section className="auth-frame">
@@ -66,7 +76,10 @@ export default function AuthPage() {
             <p>Safer sites. Traceable materials. Stronger communities across Ghana.</p>
           </div>
           <div className="auth-story-footer">
-            <span>Infrastructure</span><span>People</span><span>A stronger tomorrow</span>
+            <span><LockKeyhole size={16} /> Secure tenant space</span>
+            <span><KeyRound size={16} /> Passwordless access</span>
+            <span><Database size={16} /> Tenant-isolated data</span>
+            <span><ShieldCheck size={16} /> Enterprise-grade security</span>
           </div>
         </aside>
 
@@ -83,9 +96,10 @@ export default function AuthPage() {
               {message && <p className={`form-message ${status === "error" ? "is-error" : ""}`}>{status === "sent" && <CheckCircle2 size={16} />}{message}</p>}
             </form>
             <div className="or-divider"><span />or<span /></div>
-            <button className="provider-button" type="button" disabled><span className="provider-mark google">G</span> Continue with Google <small>Planned</small></button>
-            <button className="provider-button" type="button" disabled><span className="provider-mark microsoft">▦</span> Continue with Microsoft <small>Planned</small></button>
+            <button className="provider-button" type="button" onClick={() => void continueWithProvider("google")}><GoogleMark /> Continue with Google</button>
+            <button className="provider-button" type="button" onClick={() => void continueWithProvider("azure")}><MicrosoftMark /> Continue with Microsoft</button>
             <p className="support-link"><Sparkles size={13} /> Need help signing in?</p>
+            <button className="create-organisation-link" type="button" onClick={() => document.getElementById("email")?.focus()}>New to BuildProof?<span>Create an organisation <ArrowRight size={16} /></span></button>
           </div>
           <div className="trust-list">
             <span><LockKeyhole size={15} /> Passwordless access</span>
@@ -96,4 +110,12 @@ export default function AuthPage() {
       </section>
     </main>
   );
+}
+
+function GoogleMark() {
+  return <svg className="provider-logo google-logo" viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M21.35 12.22c0-.72-.06-1.22-.2-1.74H12v3.29h5.37c-.11.82-.73 2.05-2.11 2.88l-.02.11 3.07 2.38.21.02c1.93-1.78 2.83-4.4 2.83-7.02Z"/><path fill="#34A853" d="M12 21.72c2.63 0 4.83-.87 6.44-2.36l-3.07-2.4c-.82.57-1.92.98-3.37.98-2.58 0-4.77-1.7-5.55-4.05l-.1.01-3.2 2.47-.03.1A9.72 9.72 0 0 0 12 21.72Z"/><path fill="#FBBC05" d="M6.45 13.89A5.85 5.85 0 0 1 6.14 12c0-.66.12-1.3.3-1.89v-.12L3.21 7.48l-.1.05A9.7 9.7 0 0 0 2.28 12c0 1.61.39 3.14.83 4.47l3.34-2.58Z"/><path fill="#EA4335" d="M12 6.06c1.83 0 3.06.79 3.76 1.45l2.74-2.67C16.82 3.27 14.63 2.28 12 2.28a9.72 9.72 0 0 0-8.89 5.25l3.33 2.58C7.23 7.76 9.42 6.06 12 6.06Z"/></svg>;
+}
+
+function MicrosoftMark() {
+  return <svg className="provider-logo microsoft-logo" viewBox="0 0 24 24" aria-hidden="true"><path fill="#F25022" d="M2 2h9.5v9.5H2z"/><path fill="#7FBA00" d="M12.5 2H22v9.5h-9.5z"/><path fill="#00A4EF" d="M2 12.5h9.5V22H2z"/><path fill="#FFB900" d="M12.5 12.5H22V22h-9.5z"/></svg>;
 }
