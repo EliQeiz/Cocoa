@@ -57,9 +57,22 @@ export default function AuthPage() {
   }
 
   async function continueWithProvider(provider: "google" | "azure") {
-    const providerName = provider === "google" ? "Google" : "Microsoft";
-    setStatus("error");
-    setMessage(`${providerName} sign-in is not configured for this workspace yet. An administrator must add its OAuth client credentials in Supabase before it can be used.`);
+    if (provider === "azure") {
+      setStatus("error");
+      setMessage("Microsoft sign-in is not enabled for this workspace yet. Enable Azure in Supabase before using this option.");
+      return;
+    }
+
+    setStatus("sending");
+    setMessage("");
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: `${callbackOrigin}/auth` },
+    });
+    if (error) {
+      setStatus("error");
+      setMessage(error.message);
+    }
   }
 
   return (
