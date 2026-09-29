@@ -53,6 +53,7 @@ begin
       settings = settings || jsonb_build_object(
         'demo_workspace', true,
         'reported_progress', 62,
+        'reported_evidence_rate', 78,
         'project_classification', 'Public infrastructure'
       )
   where id = v_organization_id;
@@ -265,11 +266,11 @@ begin
   insert into public.audit_events (
     organization_id, project_id, actor_id, event_type, entity_type, entity_id, occurred_at, source
   ) values
-    (v_organization_id, v_project_id, v_user_id, 'evidence_uploaded', 'evidence_asset', v_project_id, timestamptz '2025-04-12 14:00:00+00', 'import'),
-    (v_organization_id, v_project_id, v_user_id, 'risk_updated', 'exception', v_project_id, timestamptz '2025-04-12 12:00:00+00', 'import'),
-    (v_organization_id, v_project_id, v_user_id, 'approval_requested', 'purchase_request', v_project_id, timestamptz '2025-04-11 16:00:00+00', 'import'),
-    (v_organization_id, v_project_id, v_user_id, 'material_recorded', 'material_package', v_project_id, timestamptz '2025-04-11 10:00:00+00', 'import'),
-    (v_organization_id, v_project_id, v_user_id, 'inspection_completed', 'verification', v_project_id, timestamptz '2025-04-10 15:00:00+00', 'import'),
+    (v_organization_id, v_project_id, v_user_id, 'cement_delivery_batch_3287', 'delivery', v_project_id, timestamptz '2025-04-12 14:00:00+00', 'import'),
+    (v_organization_id, v_project_id, v_user_id, 'reinforcement_check', 'inspection', v_project_id, timestamptz '2025-04-12 12:00:00+00', 'import'),
+    (v_organization_id, v_project_id, v_user_id, 'subgrade_completion', 'site_photo', v_project_id, timestamptz '2025-04-11 16:00:00+00', 'import'),
+    (v_organization_id, v_project_id, v_user_id, 'concrete_compressive_test', 'test_result', v_project_id, timestamptz '2025-04-11 10:00:00+00', 'import'),
+    (v_organization_id, v_project_id, v_user_id, 'aggregate_delivery_batch_7712', 'delivery', v_project_id, timestamptz '2025-04-10 15:00:00+00', 'import'),
     (v_organization_id, v_project_id, v_user_id, 'demo_seed_initialized', 'project', v_project_id, timezone('utc', now()), 'import');
 end;
 $$;
