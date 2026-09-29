@@ -9,6 +9,7 @@ const callbackOrigin = process.env.NEXT_PUBLIC_APP_URL ?? "https://cocoa-elisha-
 
 export default function AuthPage() {
   const router = useRouter();
+  const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [message, setMessage] = useState("");
@@ -44,7 +45,7 @@ export default function AuthPage() {
     setMessage("");
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: `${callbackOrigin}/auth`, shouldCreateUser: true },
+      options: { emailRedirectTo: `${callbackOrigin}/auth`, shouldCreateUser: mode === "signup" },
     });
     if (error) {
       setStatus("error");
@@ -52,17 +53,13 @@ export default function AuthPage() {
       return;
     }
     setStatus("sent");
-    setMessage("Your secure link is ready. Open the newest email on this device to continue.");
+    setMessage(mode === "signup" ? "Your account link is ready. Open the newest email on this device to create your secure workspace." : "Your secure link is ready. Open the newest email on this device to continue.");
   }
 
   async function continueWithProvider(provider: "google" | "azure") {
-    setStatus("sending");
-    setMessage("");
-    const { error } = await supabase.auth.signInWithOAuth({ provider, options: { redirectTo: `${callbackOrigin}/auth` } });
-    if (error) {
-      setStatus("error");
-      setMessage(error.message);
-    }
+    const providerName = provider === "google" ? "Google" : "Microsoft";
+    setStatus("error");
+    setMessage(`${providerName} sign-in is not configured for this workspace yet. An administrator must add its OAuth client credentials in Supabase before it can be used.`);
   }
 
   return (
@@ -89,20 +86,20 @@ export default function AuthPage() {
             <div className="tenant-note"><span>Secure tenant space</span><LockKeyhole size={16} /></div>
           </div>
           <div className="auth-form-wrap">
-            <div className="eyebrow">Welcome back</div>
-            <h2 id="sign-in-title">Sign in with your email</h2>
+            <div className="eyebrow">{mode === "signup" ? "Create your account" : "Welcome back"}</div>
+            <h2 id="sign-in-title">{mode === "signup" ? "Start with your work email" : "Sign in with your email"}</h2>
             <p className="auth-subtitle">Access your protected BuildProof workspace.</p>
             <form onSubmit={submit} className="auth-form">
-              <label htmlFor="email">Email</label>
+              <label htmlFor="email">{mode === "signup" ? "Work email" : "Email"}</label>
               <div className="input-with-icon"><Mail size={18} /><input id="email" type="email" autoComplete="email" required placeholder="name@organisation.org" value={email} onChange={(event) => setEmail(event.target.value)} /></div>
-              <button className="primary-button" disabled={status === "sending"}>{status === "sending" ? "Sending secure link…" : <>Continue <ArrowRight size={18} /></>}</button>
+              <button className="primary-button" disabled={status === "sending"}>{status === "sending" ? "Sending secure link…" : <>{mode === "signup" ? "Create secure account" : "Continue"} <ArrowRight size={18} /></>}</button>
               {message && <p className={`form-message ${status === "error" ? "is-error" : ""}`}>{status === "sent" && <CheckCircle2 size={16} />}{message}</p>}
             </form>
             <div className="or-divider"><span />or<span /></div>
             <button className="provider-button" type="button" onClick={() => void continueWithProvider("google")}><GoogleMark /> Continue with Google</button>
             <button className="provider-button" type="button" onClick={() => void continueWithProvider("azure")}><MicrosoftMark /> Continue with Microsoft</button>
             <p className="support-link"><Sparkles size={13} /> Need help signing in?</p>
-            <button className="create-organisation-link" type="button" onClick={() => document.getElementById("email")?.focus()}>New to BuildProof?<span>Create an organisation <ArrowRight size={16} /></span></button>
+            {mode === "signin" ? <button className="create-organisation-link" type="button" onClick={() => { setMode("signup"); setStatus("idle"); setMessage(""); document.getElementById("email")?.focus(); }}>New to BuildProof?<span>Create an organisation <ArrowRight size={16} /></span></button> : <button className="create-organisation-link" type="button" onClick={() => { setMode("signin"); setStatus("idle"); setMessage(""); }}>Already have an account?<span>Sign in <ArrowRight size={16} /></span></button>}
           </div>
           <div className="trust-list">
             <span><LockKeyhole size={15} /> Passwordless access</span>
