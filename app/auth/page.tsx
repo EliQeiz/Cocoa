@@ -101,7 +101,6 @@ export default function AuthPage() {
           <div className="auth-form-wrap">
             <div className="eyebrow">{mode === "signup" ? "Create your account" : "Welcome back"}</div>
             <h2 id="sign-in-title">{mode === "signup" ? "Start with your work email" : "Sign in with your email"}</h2>
-            <p className="auth-subtitle">Access your protected BuildProof workspace.</p>
             <form onSubmit={submit} className="auth-form">
               <label htmlFor="email">{mode === "signup" ? "Work email" : "Email"}</label>
               <div className="input-with-icon"><Mail size={18} /><input id="email" type="email" autoComplete="email" required placeholder="name@organisation.org" value={email} onChange={(event) => setEmail(event.target.value)} /></div>
