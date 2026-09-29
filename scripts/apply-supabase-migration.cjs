@@ -28,12 +28,11 @@ function readOptionalEnvironmentValue(name) {
 }
 
 async function main() {
-  const migrationPath = path.join(
-    process.cwd(),
-    'supabase',
-    'migrations',
-    '202609280001_buildproof_foundation.sql',
-  );
+  const migrationName = process.argv[2] || '202609280001_buildproof_foundation.sql';
+  if (!/^[a-zA-Z0-9_-]+\.sql$/.test(migrationName)) {
+    throw new Error('Pass a migration filename from supabase/migrations.');
+  }
+  const migrationPath = path.join(process.cwd(), 'supabase', 'migrations', migrationName);
   const connectionString = readEnvironmentValue('SUPABASE_DB_URL');
   const passwordOverride = readOptionalEnvironmentValue('SUPABASE_DB_PASSWORD');
   const client = new Client({
@@ -49,7 +48,7 @@ async function main() {
   try {
     await client.query(fs.readFileSync(migrationPath, 'utf8'));
     await client.query('COMMIT');
-    console.log('BuildProof foundation migration applied.');
+    console.log(`${migrationName} applied.`);
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;

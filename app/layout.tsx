@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "./buildproof.css";
 
 export const metadata: Metadata = {
   title: "BuildProof | Evidence-first construction control",
