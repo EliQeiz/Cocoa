@@ -1,0 +1,8 @@
+{
+  "name": "BuildProof",
+  "short_name": "BuildProof",
+  "description": "Evidence-first construction material control.",
+  "display": "standalone",
+  "background_color": "#0c0f0d",
+  "theme_color": "#174a36"
+}
