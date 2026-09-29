@@ -1,9 +1,11 @@
 "use client";
 
-import { ArrowRight, Building2, CheckCircle2, LockKeyhole, Mail, ShieldCheck } from "lucide-react";
+import { ArrowRight, Building2, CheckCircle2, LockKeyhole, Mail, ShieldCheck, Sparkles } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase/client";
+
+const callbackOrigin = process.env.NEXT_PUBLIC_APP_URL ?? "https://cocoa-elisha-afaris-projects.vercel.app";
 
 export default function AuthPage() {
   const router = useRouter();
@@ -11,11 +13,30 @@ export default function AuthPage() {
   const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [message, setMessage] = useState("");
 
+  async function continueFromSession() {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const { data: memberships } = await supabase
+      .from("organization_memberships")
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("status", "active")
+      .limit(1);
+    router.replace(memberships?.length ? "/workspace" : "/onboarding");
+  }
+
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      if (data.session) router.replace("/workspace");
+    const callbackError = new URLSearchParams(window.location.search).get("error_description");
+    if (callbackError) {
+      setStatus("error");
+      setMessage(callbackError.replaceAll("+", " "));
+    }
+    void continueFromSession();
+    const { data: listener } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_IN") void continueFromSession();
     });
-  }, [router]);
+    return () => listener.subscription.unsubscribe();
+  }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -23,7 +44,7 @@ export default function AuthPage() {
     setMessage("");
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: `${window.location.origin}/auth`, shouldCreateUser: true },
+      options: { emailRedirectTo: `${callbackOrigin}/auth`, shouldCreateUser: true },
     });
     if (error) {
       setStatus("error");
@@ -31,7 +52,7 @@ export default function AuthPage() {
       return;
     }
     setStatus("sent");
-    setMessage("A secure sign-in link is on its way. Open it on this device to continue.");
+    setMessage("Your secure link is ready. Open the newest email on this device to continue.");
   }
 
   return (
@@ -54,7 +75,7 @@ export default function AuthPage() {
           <div className="auth-form-wrap">
             <div className="eyebrow">Welcome back</div>
             <h2 id="sign-in-title">Sign in with your email</h2>
-            <p className="auth-subtitle">We’ll send a secure link. No password to remember.</p>
+            <p className="auth-subtitle">Access your protected BuildProof workspace.</p>
             <form onSubmit={submit} className="auth-form">
               <label htmlFor="email">Email</label>
               <div className="input-with-icon"><Mail size={18} /><input id="email" type="email" autoComplete="email" required placeholder="name@organisation.org" value={email} onChange={(event) => setEmail(event.target.value)} /></div>
@@ -62,9 +83,9 @@ export default function AuthPage() {
               {message && <p className={`form-message ${status === "error" ? "is-error" : ""}`}>{status === "sent" && <CheckCircle2 size={16} />}{message}</p>}
             </form>
             <div className="or-divider"><span />or<span /></div>
-            <button className="provider-button" type="button" disabled>Continue with Google <span>Coming soon</span></button>
-            <button className="provider-button" type="button" disabled>Continue with Microsoft <span>Coming soon</span></button>
-            <p className="support-link">Need help signing in?</p>
+            <button className="provider-button" type="button" disabled><span className="provider-mark google">G</span> Continue with Google <small>Planned</small></button>
+            <button className="provider-button" type="button" disabled><span className="provider-mark microsoft">▦</span> Continue with Microsoft <small>Planned</small></button>
+            <p className="support-link"><Sparkles size={13} /> Need help signing in?</p>
           </div>
           <div className="trust-list">
             <span><LockKeyhole size={15} /> Passwordless access</span>
