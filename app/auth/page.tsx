@@ -84,7 +84,10 @@ export default function AuthPage() {
         </aside>
 
         <section className="auth-panel" aria-labelledby="sign-in-title">
-          <div className="tenant-note"><span>Secure tenant space</span><LockKeyhole size={16} /></div>
+          <div className="auth-panel-header">
+            <div className="brand auth-panel-brand"><Building2 size={25} strokeWidth={1.8} /><span>BuildProof</span><small>by AuraFlow</small></div>
+            <div className="tenant-note"><span>Secure tenant space</span><LockKeyhole size={16} /></div>
+          </div>
           <div className="auth-form-wrap">
             <div className="eyebrow">Welcome back</div>
             <h2 id="sign-in-title">Sign in with your email</h2>
