@@ -67,6 +67,11 @@ async function main() {
           'public.register_delivery_evidence(uuid,uuid,text,text,text,bigint,text,text)'
         ) is not null as available;
       `);
+    const receiptCommand = await client.query(`
+        select to_regprocedure(
+          'public.receive_project_material_delivery(uuid,uuid,numeric,text,text,text,text,text)'
+        ) is not null as available;
+      `);
 
     const summary = {
       tables: tables.rows.map((row) => row.table_name),
@@ -75,6 +80,7 @@ async function main() {
       evidenceBucket: bucket.rows[0] || null,
       evidenceStoragePolicyCount: evidencePolicies.rows[0].count,
       evidenceRegistrationCommandAvailable: evidenceCommand.rows[0].available,
+      materialReceiptCommandAvailable: receiptCommand.rows[0].available,
     };
     console.log(JSON.stringify(summary, null, 2));
 
@@ -84,6 +90,7 @@ async function main() {
       summary.policyCount !== 26 ||
       summary.evidenceStoragePolicyCount !== 3 ||
       !summary.evidenceRegistrationCommandAvailable ||
+      !summary.materialReceiptCommandAvailable ||
       !summary.evidenceBucket ||
       summary.evidenceBucket.public
     ) {

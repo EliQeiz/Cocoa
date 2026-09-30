@@ -766,7 +766,7 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [purchaseRequests, setPurchaseRequests] = useState<Array<{ id: string; request_number: string; status: string; purpose: string | null; needed_by_date: string | null; requested_at: string; purchase_request_lines?: Array<{ description: string; requested_quantity: number; unit: string }> }>>([]);
   const [approvalNotes, setApprovalNotes] = useState<Record<string, string>>({});
-  const [packageOptions, setPackageOptions] = useState<Array<{ id: string; name: string }>>([]);
+  const [packageOptions, setPackageOptions] = useState<Array<{ id: string; name: string; unit: string; approved_quantity: number; received_quantity: number }>>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -774,9 +774,9 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
   const [savingRequest, setSavingRequest] = useState("");
   const [filter, setFilter] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
-  const [form, setForm] = useState({ title: "", description: "", severity: "medium", dueAt: "", deliveryReference: "", vehicleReference: "", notes: "", packageId: "", quantity: "", unit: "", findings: "", recommendationNumber: "", amount: "", currency: "GHS", rationale: "", requestNumber: "", itemDescription: "", requestQuantity: "", requestUnit: "", neededBy: "", requestPurpose: "", estimatedRate: "" });
+  const [form, setForm] = useState({ title: "", description: "", severity: "medium", dueAt: "", deliveryReference: "", vehicleReference: "", manufacturerBatch: "", certificateReference: "", notes: "", packageId: "", quantity: "", unit: "", findings: "", recommendationNumber: "", amount: "", currency: "GHS", rationale: "", requestNumber: "", itemDescription: "", requestQuantity: "", requestUnit: "", neededBy: "", requestPurpose: "", estimatedRate: "" });
   const definition = suiteDefinitions[module];
-  const createLabel: Record<string, string> = { Materials: "Request material", Deliveries: "Register delivery", Issues: "Raise issue", Risks: "Record risk", Inspections: "Submit inspection", Finance: "Prepare recommendation" };
+  const createLabel: Record<string, string> = { Materials: "Request material", Deliveries: "Receive delivery", Issues: "Raise issue", Risks: "Record risk", Inspections: "Submit inspection", Finance: "Prepare recommendation" };
 
   const fetchRecords = useCallback(async () => {
     if (!definition || !projectId || !organizationId) return { data: [] as unknown as Record<string, unknown>[], error: "" };
@@ -806,16 +806,24 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
     void refresh();
     return () => { cancelled = true; };
   }, [fetchRecords]);
-  useEffect(() => {
-    if (module !== "Inspections" || !projectId) return;
-    let cancelled = false;
-    async function loadPackages() {
-      const { data } = await supabase.from("material_packages").select("id, name").eq("project_id", projectId).order("name");
-      if (!cancelled) setPackageOptions(data ?? []);
-    }
-    void loadPackages();
-    return () => { cancelled = true; };
+  const loadPackages = useCallback(async () => {
+    if ((module !== "Inspections" && module !== "Deliveries") || !projectId) return [] as Array<{ id: string; name: string; unit: string; approved_quantity: number; received_quantity: number }>;
+    const { data } = await supabase.from("material_packages").select("id, name, approved_quantity, received_quantity, boq_lines!inner(unit, boq_versions!inner(status))").eq("project_id", projectId).eq("boq_lines.boq_versions.status", "approved").order("name");
+    return (data ?? []).map((row) => {
+      const line = Array.isArray(row.boq_lines) ? row.boq_lines[0] : row.boq_lines;
+      return { id: row.id, name: row.name, unit: line?.unit ?? "units", approved_quantity: Number(row.approved_quantity), received_quantity: Number(row.received_quantity) };
+    });
   }, [module, projectId]);
+  useEffect(() => {
+    if (module !== "Inspections" && module !== "Deliveries") return;
+    let cancelled = false;
+    async function refreshPackages() {
+      const options = await loadPackages();
+      if (!cancelled) setPackageOptions(options);
+    }
+    void refreshPackages();
+    return () => { cancelled = true; };
+  }, [loadPackages, module]);
   const loadPurchaseRequests = useCallback(async () => {
     if ((module !== "Approvals" && module !== "Materials") || !projectId) return [];
     let query = supabase.from("purchase_requests").select("id, request_number, status, purpose, needed_by_date, requested_at, purchase_request_lines(description, requested_quantity, unit)").eq("project_id", projectId);
@@ -853,8 +861,8 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
       command = "create_project_exception";
       parameters = { p_project_id: projectId, p_title: form.title, p_description: form.description, p_severity: form.severity, p_due_at: form.dueAt ? new Date(`${form.dueAt}T23:59:59Z`).toISOString() : null };
     } else if (module === "Deliveries") {
-      command = "create_project_delivery";
-      parameters = { p_project_id: projectId, p_delivery_reference: form.deliveryReference, p_vehicle_reference: form.vehicleReference, p_notes: form.notes };
+      command = "receive_project_material_delivery";
+      parameters = { p_project_id: projectId, p_material_package_id: form.packageId, p_received_quantity: Number(form.quantity), p_delivery_reference: form.deliveryReference, p_vehicle_reference: form.vehicleReference, p_manufacturer_batch_reference: form.manufacturerBatch, p_certificate_reference: form.certificateReference, p_condition_notes: form.notes };
     } else if (module === "Inspections") {
       command = "create_project_inspection";
       parameters = { p_project_id: projectId, p_material_package_id: form.packageId, p_observed_quantity: Number(form.quantity), p_unit: form.unit, p_findings: form.findings, p_project_site_id: null };
@@ -872,8 +880,9 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
       } else {
         setSuccess(`${createLabel[module]} saved to the project record.`);
         setCreateOpen(false);
-        setForm({ title: "", description: "", severity: "medium", dueAt: "", deliveryReference: "", vehicleReference: "", notes: "", packageId: "", quantity: "", unit: "", findings: "", recommendationNumber: "", amount: "", currency: "GHS", rationale: "", requestNumber: "", itemDescription: "", requestQuantity: "", requestUnit: "", neededBy: "", requestPurpose: "", estimatedRate: "" });
+        setForm({ title: "", description: "", severity: "medium", dueAt: "", deliveryReference: "", vehicleReference: "", manufacturerBatch: "", certificateReference: "", notes: "", packageId: "", quantity: "", unit: "", findings: "", recommendationNumber: "", amount: "", currency: "GHS", rationale: "", requestNumber: "", itemDescription: "", requestQuantity: "", requestUnit: "", neededBy: "", requestPurpose: "", estimatedRate: "" });
         await loadRecords();
+        if (module === "Deliveries") setPackageOptions(await loadPackages());
         if (module === "Materials") setPurchaseRequests(await loadPurchaseRequests());
       }
     } catch (commandError) {
@@ -929,8 +938,11 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
         <div className="suite-form-row"><label>Severity<select value={form.severity} onChange={(event) => setFormValue("severity", event.target.value)}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="critical">Critical</option></select></label><label>Due date<input type="date" value={form.dueAt} onChange={(event) => setFormValue("dueAt", event.target.value)} /></label></div>
       </>}
       {module === "Deliveries" && <>
-        <div className="suite-form-row"><label>Delivery reference<input maxLength={120} value={form.deliveryReference} onChange={(event) => setFormValue("deliveryReference", event.target.value)} /></label><label>Vehicle reference<input maxLength={120} value={form.vehicleReference} onChange={(event) => setFormValue("vehicleReference", event.target.value)} /></label></div>
-        <label>Receiving notes<textarea rows={3} maxLength={2000} value={form.notes} onChange={(event) => setFormValue("notes", event.target.value)} /></label>
+        <label>Material package<select required value={form.packageId} onChange={(event) => setFormValue("packageId", event.target.value)}><option value="">Select an approved package</option>{packageOptions.map((item) => <option key={item.id} value={item.id}>{item.name} · {Math.max(0, item.approved_quantity - item.received_quantity)} {item.unit} available</option>)}</select></label>
+        <div className="suite-form-row"><label>Delivery reference<input required minLength={2} maxLength={120} placeholder="e.g. GHA-DEL-2841" value={form.deliveryReference} onChange={(event) => setFormValue("deliveryReference", event.target.value)} /></label><label>Vehicle / truck reference<input maxLength={120} value={form.vehicleReference} onChange={(event) => setFormValue("vehicleReference", event.target.value)} /></label></div>
+        <div className="suite-form-row"><label>Received quantity<input required type="number" min="0.001" step="0.001" max={packageOptions.find((item) => item.id === form.packageId) ? Math.max(0, packageOptions.find((item) => item.id === form.packageId)!.approved_quantity - packageOptions.find((item) => item.id === form.packageId)!.received_quantity) : undefined} value={form.quantity} onChange={(event) => setFormValue("quantity", event.target.value)} />{packageOptions.find((item) => item.id === form.packageId) && <small>Unit: {packageOptions.find((item) => item.id === form.packageId)?.unit}</small>}</label><label>Manufacturer batch reference<input maxLength={120} value={form.manufacturerBatch} onChange={(event) => setFormValue("manufacturerBatch", event.target.value)} /></label><label>Certificate reference<input maxLength={160} value={form.certificateReference} onChange={(event) => setFormValue("certificateReference", event.target.value)} /></label></div>
+        <label>Receiving condition / notes<textarea required minLength={3} rows={3} maxLength={2000} value={form.notes} onChange={(event) => setFormValue("notes", event.target.value)} placeholder="Describe the received condition, discrepancies or inspection notes" /></label>
+        {!packageOptions.length && <p className="suite-form-hint">This project needs an approved Bill of Quantities material package before you can receive materials.</p>}
       </>}
       {module === "Materials" && <>
         <div className="suite-form-row"><label>Request number<input required minLength={2} maxLength={48} value={form.requestNumber} onChange={(event) => setFormValue("requestNumber", event.target.value)} /></label><label>Needed by<input type="date" value={form.neededBy} onChange={(event) => setFormValue("neededBy", event.target.value)} /></label></div>
@@ -948,7 +960,7 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
         <div className="suite-form-row"><label>Recommendation number<input required minLength={2} maxLength={48} value={form.recommendationNumber} onChange={(event) => setFormValue("recommendationNumber", event.target.value)} /></label><label>Amount<input type="number" min="0" step="0.01" value={form.amount} onChange={(event) => setFormValue("amount", event.target.value)} /></label><label>Currency<select value={form.currency} onChange={(event) => setFormValue("currency", event.target.value)}><option value="GHS">GHS</option><option value="USD">USD</option><option value="EUR">EUR</option><option value="GBP">GBP</option></select></label></div>
         <label>Rationale<textarea required minLength={3} maxLength={4000} rows={3} value={form.rationale} onChange={(event) => setFormValue("rationale", event.target.value)} /></label>
       </>}
-      <button className="suite-save-button" type="submit" disabled={saving || (module === "Inspections" && !packageOptions.length)}>{saving ? "Saving…" : "Save record"}</button>
+      <button className="suite-save-button" type="submit" disabled={saving || ((module === "Inspections" || module === "Deliveries") && !packageOptions.length)}>{saving ? "Saving…" : module === "Deliveries" ? "Record receipt" : "Save record"}</button>
     </form>}
     {module === "Approvals" && <section className="approval-queue" aria-labelledby="approval-queue-title"><div className="approval-queue-heading"><div><h3 id="approval-queue-title">Requests awaiting a decision</h3><p>Each decision updates the request and writes to the approval and audit history.</p></div><button onClick={async () => setPurchaseRequests(await loadPurchaseRequests())}>Refresh queue</button></div>{purchaseRequests.length ? <div className="approval-request-list">{purchaseRequests.map((request) => <article className="approval-request" key={request.id}><div><strong>{request.request_number}</strong><span className={`request-status request-${request.status}`}>{labelize(request.status)}</span></div>{request.purchase_request_lines?.map((line, index) => <p key={`${request.id}-line-${index}`}><strong>{line.description}</strong> · {line.requested_quantity} {line.unit}</p>)}<p>{request.purpose || "No additional purpose provided."}</p>{request.needed_by_date && <small>Needed by {request.needed_by_date}</small>}<label>Decision rationale<textarea required minLength={3} rows={2} value={approvalNotes[request.id] ?? ""} onChange={(event) => setApprovalNotes((current) => ({ ...current, [request.id]: event.target.value }))} placeholder="Record the reason for this decision" /></label><div className="approval-actions"><button disabled={savingRequest === request.id} onClick={() => void decideRequest(request.id, "approved")}>Approve request</button><button disabled={savingRequest === request.id} onClick={() => void decideRequest(request.id, "queried")}>Request changes</button><button disabled={savingRequest === request.id} onClick={() => void decideRequest(request.id, "rejected")}>Reject</button></div></article>)}</div> : <p className="suite-empty-queue">No purchase requests are awaiting a decision. Submitted material requests will appear here.</p>}</section>}
     {module === "Materials" && purchaseRequests.length > 0 && <section className="material-request-log"><h3>Purchase requests</h3>{purchaseRequests.map((request) => <div key={request.id}><strong>{request.request_number}</strong><span>{request.purchase_request_lines?.map((line) => `${line.description} · ${line.requested_quantity} ${line.unit}`).join(", ") || request.purpose || "Material request"}</span><em className={`request-status request-${request.status}`}>{labelize(request.status)}</em></div>)}</section>}
