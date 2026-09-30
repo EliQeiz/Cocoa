@@ -764,16 +764,19 @@ const suiteDefinitions: Record<string, { title: string; description: string; tab
 
 function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module: string; projectId: string; organizationId: string; onBack: () => void }) {
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [purchaseRequests, setPurchaseRequests] = useState<Array<{ id: string; request_number: string; status: string; purpose: string | null; needed_by_date: string | null; requested_at: string }>>([]);
+  const [approvalNotes, setApprovalNotes] = useState<Record<string, string>>({});
   const [packageOptions, setPackageOptions] = useState<Array<{ id: string; name: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [savingRequest, setSavingRequest] = useState("");
   const [filter, setFilter] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
-  const [form, setForm] = useState({ title: "", description: "", severity: "medium", dueAt: "", deliveryReference: "", vehicleReference: "", notes: "", packageId: "", quantity: "", unit: "", findings: "", recommendationNumber: "", amount: "", currency: "GHS", rationale: "" });
+  const [form, setForm] = useState({ title: "", description: "", severity: "medium", dueAt: "", deliveryReference: "", vehicleReference: "", notes: "", packageId: "", quantity: "", unit: "", findings: "", recommendationNumber: "", amount: "", currency: "GHS", rationale: "", requestNumber: "", itemDescription: "", requestQuantity: "", requestUnit: "", neededBy: "", requestPurpose: "", estimatedRate: "" });
   const definition = suiteDefinitions[module];
-  const createLabel: Record<string, string> = { Deliveries: "Register delivery", Issues: "Raise issue", Risks: "Record risk", Inspections: "Submit inspection", Finance: "Prepare recommendation" };
+  const createLabel: Record<string, string> = { Materials: "Request material", Deliveries: "Register delivery", Issues: "Raise issue", Risks: "Record risk", Inspections: "Submit inspection", Finance: "Prepare recommendation" };
 
   const fetchRecords = useCallback(async () => {
     if (!definition || !projectId || !organizationId) return { data: [] as unknown as Record<string, unknown>[], error: "" };
@@ -813,6 +816,22 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
     void loadPackages();
     return () => { cancelled = true; };
   }, [module, projectId]);
+  const loadPurchaseRequests = useCallback(async () => {
+    if ((module !== "Approvals" && module !== "Materials") || !projectId) return [];
+    let query = supabase.from("purchase_requests").select("id, request_number, status, purpose, needed_by_date, requested_at").eq("project_id", projectId);
+    if (module === "Approvals") query = query.in("status", ["submitted", "under_review", "queried"]);
+    const { data } = await query.order("created_at", { ascending: false });
+    return (data ?? []) as unknown as typeof purchaseRequests;
+  }, [module, projectId]);
+  useEffect(() => {
+    let cancelled = false;
+    async function refreshRequests() {
+      const requests = await loadPurchaseRequests();
+      if (!cancelled) setPurchaseRequests(requests);
+    }
+    void refreshRequests();
+    return () => { cancelled = true; };
+  }, [loadPurchaseRequests]);
   async function loadRecords() {
     setLoading(true);
     const result = await fetchRecords();
@@ -827,7 +846,10 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
     setSuccess("");
     let command;
     let parameters: Record<string, unknown>;
-    if (module === "Issues" || module === "Risks") {
+    if (module === "Materials") {
+      command = "submit_material_purchase_request";
+      parameters = { p_project_id: projectId, p_request_number: form.requestNumber, p_description: form.itemDescription, p_requested_quantity: Number(form.requestQuantity), p_unit: form.requestUnit, p_needed_by_date: form.neededBy || null, p_purpose: form.requestPurpose, p_estimated_unit_rate: form.estimatedRate ? Number(form.estimatedRate) : null };
+    } else if (module === "Issues" || module === "Risks") {
       command = "create_project_exception";
       parameters = { p_project_id: projectId, p_title: form.title, p_description: form.description, p_severity: form.severity, p_due_at: form.dueAt ? new Date(`${form.dueAt}T23:59:59Z`).toISOString() : null };
     } else if (module === "Deliveries") {
@@ -850,8 +872,9 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
       } else {
         setSuccess(`${createLabel[module]} saved to the project record.`);
         setCreateOpen(false);
-        setForm({ title: "", description: "", severity: "medium", dueAt: "", deliveryReference: "", vehicleReference: "", notes: "", packageId: "", quantity: "", unit: "", findings: "", recommendationNumber: "", amount: "", currency: "GHS", rationale: "" });
+        setForm({ title: "", description: "", severity: "medium", dueAt: "", deliveryReference: "", vehicleReference: "", notes: "", packageId: "", quantity: "", unit: "", findings: "", recommendationNumber: "", amount: "", currency: "GHS", rationale: "", requestNumber: "", itemDescription: "", requestQuantity: "", requestUnit: "", neededBy: "", requestPurpose: "", estimatedRate: "" });
         await loadRecords();
+        if (module === "Materials") setPurchaseRequests(await loadPurchaseRequests());
       }
     } catch (commandError) {
       setError(commandError instanceof Error ? commandError.message : "The command could not be completed.");
@@ -861,6 +884,26 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
   }
   function setFormValue(field: keyof typeof form, value: string) {
     setForm((current) => ({ ...current, [field]: value }));
+  }
+  async function decideRequest(requestId: string, decision: "approved" | "queried" | "rejected" | "returned" | "variation_required") {
+    const rationale = approvalNotes[requestId]?.trim() ?? "";
+    if (rationale.length < 3) {
+      setError("Add a decision rationale before recording this approval action.");
+      return;
+    }
+    setSavingRequest(requestId);
+    setError("");
+    setSuccess("");
+    const { error: commandError } = await supabase.rpc("decide_purchase_request", { p_purchase_request_id: requestId, p_decision: decision, p_rationale: rationale });
+    if (commandError) {
+      setError(commandError.message);
+    } else {
+      setSuccess(`Request ${labelize(decision)} and saved to the approval history.`);
+      setApprovalNotes((current) => ({ ...current, [requestId]: "" }));
+      setPurchaseRequests(await loadPurchaseRequests());
+      await loadRecords();
+    }
+    setSavingRequest("");
   }
 
   if (!definition) return null;
@@ -888,6 +931,12 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
         <div className="suite-form-row"><label>Delivery reference<input maxLength={120} value={form.deliveryReference} onChange={(event) => setFormValue("deliveryReference", event.target.value)} /></label><label>Vehicle reference<input maxLength={120} value={form.vehicleReference} onChange={(event) => setFormValue("vehicleReference", event.target.value)} /></label></div>
         <label>Receiving notes<textarea rows={3} maxLength={2000} value={form.notes} onChange={(event) => setFormValue("notes", event.target.value)} /></label>
       </>}
+      {module === "Materials" && <>
+        <div className="suite-form-row"><label>Request number<input required minLength={2} maxLength={48} value={form.requestNumber} onChange={(event) => setFormValue("requestNumber", event.target.value)} /></label><label>Needed by<input type="date" value={form.neededBy} onChange={(event) => setFormValue("neededBy", event.target.value)} /></label></div>
+        <label>Material or service<input required minLength={2} maxLength={500} value={form.itemDescription} onChange={(event) => setFormValue("itemDescription", event.target.value)} /></label>
+        <div className="suite-form-row"><label>Quantity<input required type="number" min="0.001" step="0.001" value={form.requestQuantity} onChange={(event) => setFormValue("requestQuantity", event.target.value)} /></label><label>Unit<input required maxLength={24} placeholder="e.g. bags, tonnes" value={form.requestUnit} onChange={(event) => setFormValue("requestUnit", event.target.value)} /></label><label>Est. unit rate<input type="number" min="0" step="0.01" value={form.estimatedRate} onChange={(event) => setFormValue("estimatedRate", event.target.value)} /></label></div>
+        <label>Purpose / specification<input maxLength={2000} value={form.requestPurpose} onChange={(event) => setFormValue("requestPurpose", event.target.value)} /></label>
+      </>}
       {module === "Inspections" && <>
         <label>Material package<select required value={form.packageId} onChange={(event) => setFormValue("packageId", event.target.value)}><option value="">Select a project package</option>{packageOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
         <div className="suite-form-row"><label>Observed quantity<input required type="number" min="0" step="0.001" value={form.quantity} onChange={(event) => setFormValue("quantity", event.target.value)} /></label><label>Unit<input required maxLength={24} value={form.unit} onChange={(event) => setFormValue("unit", event.target.value)} /></label></div>
@@ -900,6 +949,8 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
       </>}
       <button className="suite-save-button" type="submit" disabled={saving || (module === "Inspections" && !packageOptions.length)}>{saving ? "Saving…" : "Save record"}</button>
     </form>}
+    {module === "Approvals" && <section className="approval-queue" aria-labelledby="approval-queue-title"><div className="approval-queue-heading"><div><h3 id="approval-queue-title">Requests awaiting a decision</h3><p>Each decision updates the request and writes to the approval and audit history.</p></div><button onClick={async () => setPurchaseRequests(await loadPurchaseRequests())}>Refresh queue</button></div>{purchaseRequests.length ? <div className="approval-request-list">{purchaseRequests.map((request) => <article className="approval-request" key={request.id}><div><strong>{request.request_number}</strong><span className={`request-status request-${request.status}`}>{labelize(request.status)}</span></div><p>{request.purpose || "No purpose provided."}</p>{request.needed_by_date && <small>Needed by {request.needed_by_date}</small>}<label>Decision rationale<textarea required minLength={3} rows={2} value={approvalNotes[request.id] ?? ""} onChange={(event) => setApprovalNotes((current) => ({ ...current, [request.id]: event.target.value }))} placeholder="Record the reason for this decision" /></label><div className="approval-actions"><button disabled={savingRequest === request.id} onClick={() => void decideRequest(request.id, "approved")}>Approve request</button><button disabled={savingRequest === request.id} onClick={() => void decideRequest(request.id, "queried")}>Request changes</button><button disabled={savingRequest === request.id} onClick={() => void decideRequest(request.id, "rejected")}>Reject</button></div></article>)}</div> : <p className="suite-empty-queue">No purchase requests are awaiting a decision. Submitted material requests will appear here.</p>}</section>}
+    {module === "Materials" && purchaseRequests.length > 0 && <section className="material-request-log"><h3>Purchase requests</h3>{purchaseRequests.map((request) => <div key={request.id}><strong>{request.request_number}</strong><span>{request.purpose || "Material request"}</span><em className={`request-status request-${request.status}`}>{labelize(request.status)}</em></div>)}</section>}
     <div className="suite-table-wrap"><table className="suite-table"><thead><tr>{definition.columns.split(", ").filter((key) => key !== "id").map((key) => <th key={key}>{labelize(key)}</th>)}</tr></thead><tbody>
       {loading ? <tr><td colSpan={definition.columns.split(", ").length}>Loading {definition.title.toLowerCase()}…</td></tr> : visibleRows.length ? visibleRows.map((row) => <tr key={String(row.id)}>{definition.columns.split(", ").filter((key) => key !== "id").map((key) => <td key={key}>{row[key] == null || row[key] === "" ? "—" : String(row[key])}</td>)}</tr>) : <tr><td colSpan={definition.columns.split(", ").length}>No {definition.title.toLowerCase()} records found for this project yet.</td></tr>}
     </tbody></table></div>
