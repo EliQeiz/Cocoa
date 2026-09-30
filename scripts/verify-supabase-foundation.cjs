@@ -51,12 +51,30 @@ async function main() {
         from storage.buckets
         where id = 'buildproof-evidence';
       `);
+    const evidencePolicies = await client.query(`
+        select count(*)::int as count
+        from pg_policies
+        where schemaname = 'storage'
+          and tablename = 'objects'
+          and policyname in (
+            'buildproof_evidence_member_read',
+            'buildproof_evidence_member_upload',
+            'buildproof_evidence_orphan_cleanup'
+          );
+      `);
+    const evidenceCommand = await client.query(`
+        select to_regprocedure(
+          'public.register_delivery_evidence(uuid,uuid,text,text,text,bigint,text,text)'
+        ) is not null as available;
+      `);
 
     const summary = {
       tables: tables.rows.map((row) => row.table_name),
       rlsEnabledTableCount: rls.rows[0].count,
       policyCount: policies.rows[0].count,
       evidenceBucket: bucket.rows[0] || null,
+      evidenceStoragePolicyCount: evidencePolicies.rows[0].count,
+      evidenceRegistrationCommandAvailable: evidenceCommand.rows[0].available,
     };
     console.log(JSON.stringify(summary, null, 2));
 
@@ -64,6 +82,8 @@ async function main() {
       summary.tables.length !== 26 ||
       summary.rlsEnabledTableCount !== 26 ||
       summary.policyCount !== 26 ||
+      summary.evidenceStoragePolicyCount !== 3 ||
+      !summary.evidenceRegistrationCommandAvailable ||
       !summary.evidenceBucket ||
       summary.evidenceBucket.public
     ) {

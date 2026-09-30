@@ -750,7 +750,7 @@ export default function WorkspacePage() {
 
 const suiteDefinitions: Record<string, { title: string; description: string; table: "projects" | "verifications" | "material_packages" | "deliveries" | "approval_actions" | "exceptions" | "audit_events" | "organization_memberships" | "release_recommendations"; columns: string; scope: "project" | "organization" }> = {
   Projects: { title: "Projects", description: "Project register and delivery status for this organisation.", table: "projects", columns: "id, project_code, name, status, client_name, planned_start_date, planned_end_date", scope: "organization" },
-  Evidence: { title: "Evidence", description: "Verification records and supporting field findings for this project.", table: "verifications", columns: "id, status, unit, findings, verified_at, created_at", scope: "project" },
+  Evidence: { title: "Evidence", description: "Capture and review field proof attached to project deliveries.", table: "verifications", columns: "id, status, unit, findings, verified_at, created_at", scope: "project" },
   Materials: { title: "Materials", description: "Approved quantities, receipts and verification status by package.", table: "material_packages", columns: "id, package_code, name, status, approved_quantity, received_quantity, verified_quantity", scope: "project" },
   Deliveries: { title: "Deliveries", description: "Inbound delivery records and receiving details.", table: "deliveries", columns: "id, delivery_reference, status, vehicle_reference, received_at, notes, created_at", scope: "project" },
   Approvals: { title: "Approvals", description: "Recorded approval decisions and their rationale.", table: "approval_actions", columns: "id, decision, rationale, acted_at, created_at", scope: "project" },
@@ -920,6 +920,7 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
     <div className="suite-toolbar"><label><span className="sr-only">Filter {definition.title.toLowerCase()}</span><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder={`Filter ${definition.title.toLowerCase()}…`} /></label><span>{visibleRows.length} records</span>{createLabel[module] && <button className="suite-create-button" onClick={() => { setCreateOpen((open) => !open); setError(""); setSuccess(""); }}>{createOpen ? "Cancel" : `+ ${createLabel[module]}`}</button>}<button onClick={() => void loadRecords()} disabled={loading}>Refresh</button><button onClick={downloadRows} disabled={!visibleRows.length}>Export CSV</button></div>
     {success && <p className="suite-success" role="status">{success}</p>}
     {error && <p className="suite-error" role="alert">{createOpen ? "This action could not be saved:" : "Couldn’t load these tenant records:"} {error}</p>}
+    {module === "Evidence" && <EvidenceCapture projectId={projectId} organizationId={organizationId} />}
     {createOpen && <form className="suite-create-form" onSubmit={(event) => void createRecord(event)}>
       <div className="suite-create-title"><div><strong>{createLabel[module]}</strong><p>Saved through an authenticated, role-checked command.</p></div><button type="button" aria-label="Close form" onClick={() => setCreateOpen(false)}>×</button></div>
       {(module === "Issues" || module === "Risks") && <>
@@ -955,6 +956,153 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
       {loading ? <tr><td colSpan={definition.columns.split(", ").length}>Loading {definition.title.toLowerCase()}…</td></tr> : visibleRows.length ? visibleRows.map((row) => <tr key={String(row.id)}>{definition.columns.split(", ").filter((key) => key !== "id").map((key) => <td key={key}>{row[key] == null || row[key] === "" ? "—" : String(row[key])}</td>)}</tr>) : <tr><td colSpan={definition.columns.split(", ").length}>No {definition.title.toLowerCase()} records found for this project yet.</td></tr>}
     </tbody></table></div>
     <p className="suite-footnote">Records are read from your signed-in tenant under its row-level access rules. Changes to controlled records are reserved for audited, role-checked actions.</p>
+  </section>;
+}
+
+type DeliveryChoice = { id: string; delivery_reference: string | null; vehicle_reference: string | null; status: string };
+type EvidenceRecord = {
+  id: string;
+  caption: string | null;
+  created_at: string;
+  filename: string;
+  mime_type: string;
+  byte_size: number;
+  sha256: string;
+  delivery: string;
+  signed_url: string | null;
+};
+
+function EvidenceCapture({ projectId, organizationId }: { projectId: string; organizationId: string }) {
+  const [deliveries, setDeliveries] = useState<DeliveryChoice[]>([]);
+  const [records, setRecords] = useState<EvidenceRecord[]>([]);
+  const [deliveryId, setDeliveryId] = useState("");
+  const [caption, setCaption] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const fetchEvidence = useCallback(async () => {
+    const [deliveryResult, evidenceResult] = await Promise.all([
+      supabase.from("deliveries").select("id, delivery_reference, vehicle_reference, status").eq("project_id", projectId).neq("status", "void").order("created_at", { ascending: false }),
+      supabase.from("evidence_links").select("id, caption, created_at, subject_id, evidence_assets!inner(object_path, original_filename, mime_type, byte_size, sha256)").eq("project_id", projectId).eq("subject_type", "delivery").order("created_at", { ascending: false }),
+    ]);
+    const nextDeliveries = (deliveryResult.data ?? []) as DeliveryChoice[];
+    let nextError = deliveryResult.error?.message ?? "";
+    let nextRecords: EvidenceRecord[] = [];
+    if (evidenceResult.error) {
+      nextError = evidenceResult.error.message;
+    } else {
+      const links = (evidenceResult.data ?? []) as unknown as Array<{
+        id: string;
+        caption: string | null;
+        created_at: string;
+        subject_id: string;
+        evidence_assets: { object_path: string; original_filename: string; mime_type: string; byte_size: number; sha256: string };
+      }>;
+      nextRecords = await Promise.all(links.map(async (link) => {
+        const asset = Array.isArray(link.evidence_assets) ? link.evidence_assets[0] : link.evidence_assets;
+        const { data } = await supabase.storage.from("buildproof-evidence").createSignedUrl(asset.object_path, 3600);
+        const delivery = (deliveryResult.data ?? []).find((row) => row.id === link.subject_id) as DeliveryChoice | undefined;
+        return {
+          id: link.id,
+          caption: link.caption,
+          created_at: link.created_at,
+          filename: asset.original_filename,
+          mime_type: asset.mime_type,
+          byte_size: asset.byte_size,
+          sha256: asset.sha256,
+          delivery: delivery?.delivery_reference || delivery?.vehicle_reference || "Project delivery",
+          signed_url: data?.signedUrl ?? null,
+        };
+      }));
+    }
+    return { deliveries: nextDeliveries, records: nextRecords, error: nextError };
+  }, [projectId]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const result = await fetchEvidence();
+    setDeliveries(result.deliveries);
+    setRecords(result.records);
+    setError(result.error);
+    setLoading(false);
+  }, [fetchEvidence]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function refreshEvidence() {
+      const result = await fetchEvidence();
+      if (cancelled) return;
+      setDeliveries(result.deliveries);
+      setRecords(result.records);
+      setError(result.error);
+      setLoading(false);
+    }
+    void refreshEvidence();
+    return () => { cancelled = true; };
+  }, [fetchEvidence]);
+
+  async function uploadEvidence(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!file || !deliveryId) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    let objectPath = "";
+    try {
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) throw new Error("Your session has expired. Sign in again to upload evidence.");
+      if (!new Set(["image/jpeg", "image/png", "application/pdf"]).has(file.type) || file.size > 25 * 1024 * 1024) {
+        throw new Error("Choose a JPEG, PNG or PDF no larger than 25 MB.");
+      }
+      if (!globalThis.crypto?.subtle) throw new Error("This browser cannot calculate the evidence checksum securely.");
+      const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+      const sha256 = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+      const extension = file.type === "image/jpeg" ? "jpg" : file.type === "image/png" ? "png" : "pdf";
+      objectPath = `${organizationId}/${projectId}/${user.id}/${crypto.randomUUID()}.${extension}`;
+      const { error: uploadError } = await supabase.storage.from("buildproof-evidence").upload(objectPath, file, { contentType: file.type, cacheControl: "3600", upsert: false });
+      if (uploadError) throw new Error(uploadError.message);
+      const { error: registerError } = await supabase.rpc("register_delivery_evidence", {
+        p_project_id: projectId,
+        p_delivery_id: deliveryId,
+        p_object_path: objectPath,
+        p_original_filename: file.name,
+        p_mime_type: file.type,
+        p_byte_size: file.size,
+        p_sha256: sha256,
+        p_caption: caption.trim(),
+      });
+      if (registerError) {
+        await supabase.storage.from("buildproof-evidence").remove([objectPath]);
+        throw new Error(registerError.message);
+      }
+      setFile(null);
+      setCaption("");
+      const input = document.getElementById("evidence-file-input") as HTMLInputElement | null;
+      if (input) input.value = "";
+      setNotice("Evidence uploaded, linked to the delivery and recorded in the audit history.");
+      await load();
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : "The evidence file could not be uploaded.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <section className="evidence-capture" aria-labelledby="evidence-capture-title">
+    <div className="evidence-capture-heading"><div><p className="section-kicker">Field record</p><h3 id="evidence-capture-title">Delivery evidence</h3><p>Attach site photos or signed documents to a delivery. Files remain private to this organisation.</p></div><button type="button" onClick={() => { setLoading(true); void load(); }} disabled={loading}>Refresh</button></div>
+    {notice && <p className="suite-success" role="status">{notice}</p>}
+    {error && <p className="suite-error" role="alert">{error}</p>}
+    <form className="evidence-upload-form" onSubmit={(event) => void uploadEvidence(event)}>
+      <label>Project delivery<select required value={deliveryId} onChange={(event) => setDeliveryId(event.target.value)}><option value="">Select a delivery</option>{deliveries.map((delivery) => <option key={delivery.id} value={delivery.id}>{delivery.delivery_reference || "Unreferenced delivery"}{delivery.vehicle_reference ? ` · ${delivery.vehicle_reference}` : ""} · {labelize(delivery.status)}</option>)}</select></label>
+      <label>Evidence file<input id="evidence-file-input" required type="file" accept="image/jpeg,image/png,application/pdf" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /><small>JPEG, PNG or PDF · up to 25 MB</small></label>
+      <label>What does this show?<textarea required minLength={3} maxLength={1000} rows={2} value={caption} onChange={(event) => setCaption(event.target.value)} placeholder="Describe what the evidence records" /></label>
+      <button className="suite-save-button" type="submit" disabled={saving || !deliveries.length}>{saving ? "Uploading and recording…" : "Upload evidence"}</button>
+      {!deliveries.length && <p className="suite-form-hint">Register a delivery first. Evidence must be connected to a project record.</p>}
+    </form>
+    <div className="evidence-record-list"><h4>Recorded evidence <span>{records.length}</span></h4>{loading ? <p className="evidence-empty">Loading secure evidence records…</p> : records.length ? records.map((record) => <article className="evidence-record" key={record.id}><div className="evidence-record-file"><FileCheck2 size={18} aria-hidden="true" /><div><strong>{record.filename}</strong><span>{record.delivery} · {(record.byte_size / 1024 / 1024).toFixed(2)} MB</span></div></div><p>{record.caption}</p><small>SHA-256 · {record.sha256.slice(0, 16)}… · {new Date(record.created_at).toLocaleString()}</small>{record.signed_url && <a href={record.signed_url} target="_blank" rel="noreferrer">Open secure preview</a>}</article>) : <p className="evidence-empty">No evidence has been attached to a delivery in this project yet.</p>}</div>
   </section>;
 }
 
