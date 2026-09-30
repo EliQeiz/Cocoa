@@ -764,10 +764,16 @@ const suiteDefinitions: Record<string, { title: string; description: string; tab
 
 function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module: string; projectId: string; organizationId: string; onBack: () => void }) {
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [packageOptions, setPackageOptions] = useState<Array<{ id: string; name: string }>>([]);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [filter, setFilter] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [form, setForm] = useState({ title: "", description: "", severity: "medium", dueAt: "", deliveryReference: "", vehicleReference: "", notes: "", packageId: "", quantity: "", unit: "", findings: "", recommendationNumber: "", amount: "", currency: "GHS", rationale: "" });
   const definition = suiteDefinitions[module];
+  const createLabel: Record<string, string> = { Deliveries: "Register delivery", Issues: "Raise issue", Risks: "Record risk", Inspections: "Submit inspection", Finance: "Prepare recommendation" };
 
   const fetchRecords = useCallback(async () => {
     if (!definition || !projectId || !organizationId) return { data: [] as unknown as Record<string, unknown>[], error: "" };
@@ -797,12 +803,64 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
     void refresh();
     return () => { cancelled = true; };
   }, [fetchRecords]);
+  useEffect(() => {
+    if (module !== "Inspections" || !projectId) return;
+    let cancelled = false;
+    async function loadPackages() {
+      const { data } = await supabase.from("material_packages").select("id, name").eq("project_id", projectId).order("name");
+      if (!cancelled) setPackageOptions(data ?? []);
+    }
+    void loadPackages();
+    return () => { cancelled = true; };
+  }, [module, projectId]);
   async function loadRecords() {
     setLoading(true);
     const result = await fetchRecords();
     setRows(result.data);
     setError(result.error);
     setLoading(false);
+  }
+  async function createRecord(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    setSuccess("");
+    let command;
+    let parameters: Record<string, unknown>;
+    if (module === "Issues" || module === "Risks") {
+      command = "create_project_exception";
+      parameters = { p_project_id: projectId, p_title: form.title, p_description: form.description, p_severity: form.severity, p_due_at: form.dueAt ? new Date(`${form.dueAt}T23:59:59Z`).toISOString() : null };
+    } else if (module === "Deliveries") {
+      command = "create_project_delivery";
+      parameters = { p_project_id: projectId, p_delivery_reference: form.deliveryReference, p_vehicle_reference: form.vehicleReference, p_notes: form.notes };
+    } else if (module === "Inspections") {
+      command = "create_project_inspection";
+      parameters = { p_project_id: projectId, p_material_package_id: form.packageId, p_observed_quantity: Number(form.quantity), p_unit: form.unit, p_findings: form.findings, p_project_site_id: null };
+    } else if (module === "Finance") {
+      command = "create_project_release_recommendation";
+      parameters = { p_project_id: projectId, p_recommendation_number: form.recommendationNumber, p_recommended_amount: form.amount ? Number(form.amount) : null, p_currency_code: form.currency, p_rationale: form.rationale };
+    } else {
+      setSaving(false);
+      return;
+    }
+    try {
+      const { error: commandError } = await supabase.rpc(command, parameters as never);
+      if (commandError) {
+        setError(commandError.message);
+      } else {
+        setSuccess(`${createLabel[module]} saved to the project record.`);
+        setCreateOpen(false);
+        setForm({ title: "", description: "", severity: "medium", dueAt: "", deliveryReference: "", vehicleReference: "", notes: "", packageId: "", quantity: "", unit: "", findings: "", recommendationNumber: "", amount: "", currency: "GHS", rationale: "" });
+        await loadRecords();
+      }
+    } catch (commandError) {
+      setError(commandError instanceof Error ? commandError.message : "The command could not be completed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+  function setFormValue(field: keyof typeof form, value: string) {
+    setForm((current) => ({ ...current, [field]: value }));
   }
 
   if (!definition) return null;
@@ -816,8 +874,32 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
   }
   return <section className="workspace-content suite-workspace">
     <div className="suite-heading"><div><p className="section-kicker">Project suite</p><h2>{definition.title}</h2><p>{definition.description}</p></div><button className="suite-back" onClick={onBack}>← Project overview</button></div>
-    <div className="suite-toolbar"><label><span className="sr-only">Filter {definition.title.toLowerCase()}</span><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder={`Filter ${definition.title.toLowerCase()}…`} /></label><span>{visibleRows.length} records</span><button onClick={() => void loadRecords()} disabled={loading}>Refresh</button><button onClick={downloadRows} disabled={!visibleRows.length}>Export CSV</button></div>
-    {error && <p className="suite-error" role="alert">Couldn’t load these tenant records: {error}</p>}
+    <div className="suite-toolbar"><label><span className="sr-only">Filter {definition.title.toLowerCase()}</span><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder={`Filter ${definition.title.toLowerCase()}…`} /></label><span>{visibleRows.length} records</span>{createLabel[module] && <button className="suite-create-button" onClick={() => { setCreateOpen((open) => !open); setError(""); setSuccess(""); }}>{createOpen ? "Cancel" : `+ ${createLabel[module]}`}</button>}<button onClick={() => void loadRecords()} disabled={loading}>Refresh</button><button onClick={downloadRows} disabled={!visibleRows.length}>Export CSV</button></div>
+    {success && <p className="suite-success" role="status">{success}</p>}
+    {error && <p className="suite-error" role="alert">{createOpen ? "This action could not be saved:" : "Couldn’t load these tenant records:"} {error}</p>}
+    {createOpen && <form className="suite-create-form" onSubmit={(event) => void createRecord(event)}>
+      <div className="suite-create-title"><div><strong>{createLabel[module]}</strong><p>Saved through an authenticated, role-checked command.</p></div><button type="button" aria-label="Close form" onClick={() => setCreateOpen(false)}>×</button></div>
+      {(module === "Issues" || module === "Risks") && <>
+        <label>Issue title<input required minLength={3} maxLength={180} value={form.title} onChange={(event) => setFormValue("title", event.target.value)} /></label>
+        <label>Description<textarea required minLength={3} maxLength={4000} rows={3} value={form.description} onChange={(event) => setFormValue("description", event.target.value)} /></label>
+        <div className="suite-form-row"><label>Severity<select value={form.severity} onChange={(event) => setFormValue("severity", event.target.value)}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="critical">Critical</option></select></label><label>Due date<input type="date" value={form.dueAt} onChange={(event) => setFormValue("dueAt", event.target.value)} /></label></div>
+      </>}
+      {module === "Deliveries" && <>
+        <div className="suite-form-row"><label>Delivery reference<input maxLength={120} value={form.deliveryReference} onChange={(event) => setFormValue("deliveryReference", event.target.value)} /></label><label>Vehicle reference<input maxLength={120} value={form.vehicleReference} onChange={(event) => setFormValue("vehicleReference", event.target.value)} /></label></div>
+        <label>Receiving notes<textarea rows={3} maxLength={2000} value={form.notes} onChange={(event) => setFormValue("notes", event.target.value)} /></label>
+      </>}
+      {module === "Inspections" && <>
+        <label>Material package<select required value={form.packageId} onChange={(event) => setFormValue("packageId", event.target.value)}><option value="">Select a project package</option>{packageOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+        <div className="suite-form-row"><label>Observed quantity<input required type="number" min="0" step="0.001" value={form.quantity} onChange={(event) => setFormValue("quantity", event.target.value)} /></label><label>Unit<input required maxLength={24} value={form.unit} onChange={(event) => setFormValue("unit", event.target.value)} /></label></div>
+        <label>Inspection findings<textarea required minLength={3} maxLength={4000} rows={3} value={form.findings} onChange={(event) => setFormValue("findings", event.target.value)} /></label>
+        {!packageOptions.length && <p className="suite-form-hint">Add a material package before submitting an inspection.</p>}
+      </>}
+      {module === "Finance" && <>
+        <div className="suite-form-row"><label>Recommendation number<input required minLength={2} maxLength={48} value={form.recommendationNumber} onChange={(event) => setFormValue("recommendationNumber", event.target.value)} /></label><label>Amount<input type="number" min="0" step="0.01" value={form.amount} onChange={(event) => setFormValue("amount", event.target.value)} /></label><label>Currency<select value={form.currency} onChange={(event) => setFormValue("currency", event.target.value)}><option value="GHS">GHS</option><option value="USD">USD</option><option value="EUR">EUR</option><option value="GBP">GBP</option></select></label></div>
+        <label>Rationale<textarea required minLength={3} maxLength={4000} rows={3} value={form.rationale} onChange={(event) => setFormValue("rationale", event.target.value)} /></label>
+      </>}
+      <button className="suite-save-button" type="submit" disabled={saving || (module === "Inspections" && !packageOptions.length)}>{saving ? "Saving…" : "Save record"}</button>
+    </form>}
     <div className="suite-table-wrap"><table className="suite-table"><thead><tr>{definition.columns.split(", ").filter((key) => key !== "id").map((key) => <th key={key}>{labelize(key)}</th>)}</tr></thead><tbody>
       {loading ? <tr><td colSpan={definition.columns.split(", ").length}>Loading {definition.title.toLowerCase()}…</td></tr> : visibleRows.length ? visibleRows.map((row) => <tr key={String(row.id)}>{definition.columns.split(", ").filter((key) => key !== "id").map((key) => <td key={key}>{row[key] == null || row[key] === "" ? "—" : String(row[key])}</td>)}</tr>) : <tr><td colSpan={definition.columns.split(", ").length}>No {definition.title.toLowerCase()} records found for this project yet.</td></tr>}
     </tbody></table></div>
