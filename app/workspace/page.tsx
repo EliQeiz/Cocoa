@@ -15,11 +15,15 @@ import {
   MapPinned,
   Menu,
   MoreHorizontal,
+  Mountain,
   PackageCheck,
   ReceiptText,
+  Satellite,
   Settings,
   UsersRound,
+  X,
 } from "lucide-react";
+import Image from "next/image";
 import { ReactNode, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase/client";
@@ -107,9 +111,18 @@ function labelize(value: string) {
 
 export default function WorkspacePage() {
   const router = useRouter();
-  const [activeSection, setActiveSection] = useState("Overview");
+  const [activeSection, setActiveSection] = useState("Home");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [openMenu, setOpenMenu] = useState<"project" | "notifications" | "account" | null>(null);
+  const [mapLayer, setMapLayer] = useState<"Satellite" | "Map" | "Terrain">("Satellite");
+  const [mapZoom, setMapZoom] = useState(1);
+  const [siteDialog, setSiteDialog] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [notice, setNotice] = useState("");
   const [organization, setOrganization] = useState("Your organisation");
   const [project, setProject] = useState("Your first project");
+  const [projectId, setProjectId] = useState("");
   const [projectCode, setProjectCode] = useState("—");
   const [projectClient, setProjectClient] = useState("Public infrastructure");
   const [projectRange, setProjectRange] = useState("Project dates");
@@ -145,6 +158,7 @@ export default function WorkspacePage() {
         .limit(1);
       const projectRow = projects?.[0];
       if (!projectRow) return router.replace("/onboarding");
+      setProjectId(projectRow.id);
       setProject(projectRow.name);
       setProjectCode(projectRow.project_code);
       setProjectStatus(projectRow.status);
@@ -340,6 +354,7 @@ export default function WorkspacePage() {
         ? "Setup"
         : labelize(projectStatus);
   const sectionTargets: Record<string, string> = {
+    Home: "workspace-overview",
     Overview: "workspace-overview",
     Projects: "workspace-overview",
     Evidence: "evidence-ledger",
@@ -355,9 +370,57 @@ export default function WorkspacePage() {
   };
   function navigate(label: string) {
     setActiveSection(label);
+    setSidebarOpen(false);
+    setOpenMenu(null);
     document
       .getElementById(sectionTargets[label] ?? "workspace-overview")
       ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+  async function updateProjectStatus(nextStatus: "planning" | "active" | "on_hold" | "completed") {
+    if (!projectId) return;
+    const { error } = await supabase.rpc("update_project_status", { p_project_id: projectId, p_next_status: nextStatus });
+    if (error) {
+      setNotice(`Could not update project status: ${error.message}`);
+      return;
+    }
+    setProjectStatus(nextStatus);
+    setNotice(`Project status changed to ${labelize(nextStatus)}.`);
+    setOpenMenu(null);
+  }
+  function exportEvidence() {
+    const rows = [["Date", "Type", "Description", "Status"], ...ledger.map((row) => [row.date, row.type, row.description, row.status])];
+    const csv = rows.map((row) => row.map((cell) => `"${cell.replaceAll('"', '""')}"`).join(",")).join("\r\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${projectCode.toLowerCase()}-evidence-ledger.csv`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setNotice("Evidence ledger exported as CSV.");
+    setOpenMenu(null);
+  }
+  function exportReleasePack() {
+    const releasePack = {
+      organization,
+      project: { name: project, code: projectCode, status: projectStatus, location, client: projectClient, period: projectRange },
+      generatedAt: new Date().toISOString(),
+      recommendation: stats.releaseStatus,
+      indicators: stats,
+      materials,
+      evidenceLedger: ledger,
+      note: "Final release decisions remain with authorized project and funding officers.",
+    };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(releasePack, null, 2)], { type: "application/json" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${projectCode.toLowerCase()}-release-pack.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setNotice("Release pack downloaded with current project indicators and evidence records.");
+  }
+  async function signOut() {
+    await supabase.auth.signOut();
+    router.replace("/auth");
   }
   const tabs = [
     "Overview",
@@ -370,11 +433,12 @@ export default function WorkspacePage() {
     "Finance",
   ];
   return (
-    <main className="workspace-page">
-      <aside className="workspace-sidebar">
+    <main className={`workspace-page ${sidebarCollapsed ? "is-collapsed" : ""}`}>
+      <aside className={`workspace-sidebar ${sidebarOpen ? "is-open" : ""}`}>
         <div className="workspace-logo">
           <Building2 size={24} />
           <span>BuildProof</span>
+          <button className="rail-toggle" type="button" title={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"} aria-label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"} aria-expanded={!sidebarCollapsed} onClick={() => setSidebarCollapsed((value) => !value)}><Menu size={19} /></button>
         </div>
         <nav>
           {navigation.map(([Icon, label]) => (
@@ -389,20 +453,22 @@ export default function WorkspacePage() {
             </button>
           ))}
         </nav>
-        <button className="sidebar-settings" onClick={() => navigate("Team")}>
+        <button className={`sidebar-settings ${activeSection === "Settings" ? "nav-active" : ""}`} onClick={() => { setActiveSection("Settings"); setSettingsOpen(true); }}>
           <Settings size={19} />
           <span>Settings</span>
         </button>
       </aside>
+      {sidebarOpen && <button className="sidebar-backdrop" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} />}
       <section className="workspace-main">
         <header className="workspace-header">
-          <button className="mobile-menu">
-            <Menu size={21} />
+          <button className="mobile-menu" aria-label={sidebarOpen ? "Close navigation" : "Open navigation"} aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((value) => !value)}>
+            {sidebarOpen ? <X size={21} /> : <Menu size={21} />}
           </button>
           <div>
             <h1>
-              {project} <strong>{labelize(projectStatus)}</strong>{" "}
-              <ChevronDown size={17} />
+              <button className="project-title-button" onClick={() => setOpenMenu(openMenu === "project" ? null : "project")}>
+                {project} <strong>{labelize(projectStatus)}</strong> <ChevronDown size={17} />
+              </button>
             </h1>
             <p>
               <MapPinned size={13} /> {location} <span>•</span> {projectCode}{" "}
@@ -419,29 +485,33 @@ export default function WorkspacePage() {
             <b>{stats.progress}% complete</b>
           </div>
           <div className="header-actions">
-            <Bell size={19} />
+            <button className="icon-action" aria-label="Notifications" onClick={() => setOpenMenu(openMenu === "notifications" ? null : "notifications")}><Bell size={19} /></button>
             <span className="avatar">JL</span>
-            <div className="user-name">
+            <button className="user-name account-action" onClick={() => setOpenMenu(openMenu === "account" ? null : "account")}>
               Jordan Lee<small>Project Manager</small>
               <ChevronDown size={15} />
-            </div>
+            </button>
+            {openMenu === "notifications" && <div className="header-popover"><strong>Notifications</strong><p>{ledger.length ? `${ledger.length} recent project updates are available.` : "You’re all caught up."}</p><button onClick={() => navigate("Evidence")}>Review project activity</button></div>}
+            {openMenu === "account" && <div className="header-popover account-popover"><strong>Jordan Lee</strong><button onClick={() => { setActiveSection("Settings"); setSettingsOpen(true); setOpenMenu(null); }}>Workspace settings</button><button onClick={() => void signOut()}>Sign out</button></div>}
           </div>
         </header>
         <nav className="project-tabs">
           {tabs.map((tab) => (
             <button
               key={tab}
-              className={activeSection === tab ? "selected" : ""}
+              className={activeSection === tab || (tab === "Overview" && activeSection === "Home") ? "selected" : ""}
               onClick={() => navigate(tab)}
             >
               {tab}
             </button>
           ))}
-          <button className="project-actions">
+          <button className="project-actions" onClick={() => setOpenMenu(openMenu === "project" ? null : "project")}>
             Project actions <ChevronDown size={14} />
           </button>
+          {openMenu === "project" && <div className="project-action-menu"><strong>Project actions</strong><button onClick={() => void updateProjectStatus(projectStatus === "active" ? "on_hold" : "active")}>{projectStatus === "active" ? "Place on hold" : "Mark project active"}</button><button onClick={() => void updateProjectStatus("completed")}>Mark complete</button><button onClick={exportEvidence}>Export evidence ledger</button></div>}
         </nav>
         <section className="workspace-content">
+          {notice && <div className="workspace-notice" role="status">{notice}<button aria-label="Dismiss message" onClick={() => setNotice("")}>×</button></div>}
           <div className="metric-grid" id="workspace-overview">
             <article className="metric-card progress-card">
               <h2>Project progress</h2>
@@ -502,27 +572,30 @@ export default function WorkspacePage() {
                     <MapPinned size={15} /> {location}
                   </p>
                 </div>
-                <button>
-                  Satellite <ChevronDown size={14} />
+                <button onClick={() => setMapLayer((current) => current === "Satellite" ? "Map" : current === "Map" ? "Terrain" : "Satellite")}>
+                  {mapLayer === "Satellite" ? <Satellite size={14} /> : <Mountain size={14} />} {mapLayer} <ChevronDown size={14} />
                 </button>
               </div>
               <div className="map-canvas">
-                <img
+                <Image
                   src="/images/buildproof-site-map.png"
                   alt="Satellite view of the project site"
+                  fill
+                  sizes="(max-width: 720px) 100vw, (max-width: 1080px) 70vw, 45vw"
+                  style={{ transform: `scale(${mapZoom})`, filter: mapLayer === "Map" ? "saturate(.45) brightness(1.12)" : mapLayer === "Terrain" ? "sepia(.18) saturate(.85)" : undefined }}
                 />
                 <span className="map-pin">⌖</span>
                 <strong>{project}</strong>
                 <div className="map-controls">
-                  ＋<br />−
+                  <button aria-label="Zoom in" onClick={() => setMapZoom((zoom) => Math.min(zoom + .15, 1.6))}>＋</button><button aria-label="Zoom out" onClick={() => setMapZoom((zoom) => Math.max(zoom - .15, 1))}>−</button>
                 </div>
                 <div className="map-footer">
                   <span><MapPinned size={14} /> {location}</span>
                   <span>◉ 5.6037° N, 0.1870° W</span>
-                  <button>View site details <span>→</span></button>
+                  <button onClick={() => setSiteDialog(true)}>View site details <span>→</span></button>
                 </div>
               </div>
-              <button className="subtle-button">
+              <button className="subtle-button" onClick={() => setSiteDialog(true)}>
                 View all sites <span>→</span>
               </button>
             </article>
@@ -558,7 +631,7 @@ export default function WorkspacePage() {
               </div>
               <div className="trace-header" id="material-trace">
                 <h2>Material trace</h2>
-                <button>View all →</button>
+                <button onClick={() => navigate("Materials")}>View all →</button>
               </div>
               <div className="material-list">
                 {materials.length ? (
@@ -587,7 +660,7 @@ export default function WorkspacePage() {
             <article className="panel ledger-panel" id="evidence-ledger">
               <div className="panel-heading">
                 <h2>Evidence ledger</h2>
-                <button>View all →</button>
+                <button onClick={() => navigate("Evidence")}>View all →</button>
               </div>
               <div className="ledger-head">
                 <span>Date</span>
@@ -632,9 +705,7 @@ export default function WorkspacePage() {
                     </span>
                   </p>
                 </div>
-                <button
-                  disabled={stats.releaseStatus === "No release prepared"}
-                >
+                <button disabled={stats.releaseStatus === "No release prepared"} onClick={exportReleasePack}>
                   <CheckCircle2 size={18} />{" "}
                   {stats.releaseStatus === "No release prepared"
                     ? "Awaiting evidence"
@@ -645,7 +716,7 @@ export default function WorkspacePage() {
               <article className="panel activity-panel">
                 <div className="panel-heading">
                   <h2>Recent activity</h2>
-                  <button>View all →</button>
+                  <button onClick={() => navigate("Evidence")}>View all →</button>
                 </div>
                 {ledger.length ? (
                   ledger
@@ -668,6 +739,8 @@ export default function WorkspacePage() {
           </div>
         </section>
       </section>
+      {siteDialog && <div className="dialog-backdrop" role="presentation" onClick={() => setSiteDialog(false)}><section className="site-dialog" role="dialog" aria-modal="true" aria-labelledby="site-dialog-title" onClick={(event) => event.stopPropagation()}><button className="dialog-close" aria-label="Close site details" onClick={() => setSiteDialog(false)}>×</button><p className="section-kicker">Project site</p><h2 id="site-dialog-title">{project}</h2><p>{location} · {projectCode}</p><div><span>Coordinates</span><strong>5.6037° N, 0.1870° W</strong></div><div><span>Client</span><strong>{projectClient}</strong></div><button className="primary-button" onClick={() => setSiteDialog(false)}>Done</button></section></div>}
+      {settingsOpen && <div className="dialog-backdrop" role="presentation" onClick={() => setSettingsOpen(false)}><section className="site-dialog settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-dialog-title" onClick={(event) => event.stopPropagation()}><button className="dialog-close" aria-label="Close settings" onClick={() => setSettingsOpen(false)}>×</button><p className="section-kicker">Workspace</p><h2 id="settings-dialog-title">Settings</h2><p>Organization and project details connected to this tenant.</p><div><span>Organization</span><strong>{organization}</strong></div><div><span>Project</span><strong>{project} · {projectCode}</strong></div><div><span>Project state</span><strong>{labelize(projectStatus)}</strong></div><div><span>Data access</span><strong>Tenant protected</strong></div><button className="primary-button" onClick={() => setSettingsOpen(false)}>Done</button></section></div>}
     </main>
   );
 }
