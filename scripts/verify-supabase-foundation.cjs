@@ -94,6 +94,14 @@ async function main() {
           coalesce((select relrowsecurity from pg_class where oid = 'public.organization_invitations'::regclass), false) as rls_enabled,
           not has_column_privilege('authenticated', 'public.organization_invitations', 'token_hash', 'select') as token_digest_private;
       `);
+    const legacyInviteHook = await client.query(`
+        select exists (
+          select 1 from pg_trigger
+          where tgrelid = 'auth.users'::regclass
+            and tgname = 'provision_invited_user_on_auth_signup'
+            and not tgisinternal
+        ) as present;
+      `);
 
     const summary = {
       tables: tables.rows.map((row) => row.table_name),
@@ -112,6 +120,7 @@ async function main() {
       invitationTableAvailable: invitationCommands.rows[0].table_available,
       invitationRlsEnabled: invitationCommands.rows[0].rls_enabled,
       invitationTokenDigestPrivate: invitationCommands.rows[0].token_digest_private,
+      obsoleteInvitationSignupTriggerPresent: legacyInviteHook.rows[0].present,
     };
     console.log(JSON.stringify(summary, null, 2));
 
@@ -131,6 +140,7 @@ async function main() {
       !summary.invitationTableAvailable ||
       !summary.invitationRlsEnabled ||
       !summary.invitationTokenDigestPrivate ||
+      summary.obsoleteInvitationSignupTriggerPresent ||
       !summary.evidenceBucket ||
       summary.evidenceBucket.public
     ) {
