@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowRight, Building2, CheckCircle2, Database, KeyRound, LockKeyhole, Mail, ShieldCheck, Sparkles } from "lucide-react";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase/client";
 
@@ -13,10 +13,26 @@ export default function AuthPage() {
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [message, setMessage] = useState("");
+  const acceptingInvite = useRef(false);
+  const inviteToken = useRef("");
 
-  async function continueFromSession() {
+  const continueFromSession = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
+    const token = inviteToken.current || new URLSearchParams(window.location.search).get("invite") || "";
+    if (token && acceptingInvite.current) return;
+    if (token) {
+      acceptingInvite.current = true;
+      const { error } = await supabase.rpc("accept_organization_invitation", { p_token: token });
+      acceptingInvite.current = false;
+      if (error) {
+        setStatus("error");
+        setMessage(error.message);
+        return;
+      }
+      inviteToken.current = "";
+      window.history.replaceState({}, "", "/auth");
+    }
     const { data: memberships } = await supabase
       .from("organization_memberships")
       .select("id")
@@ -24,20 +40,28 @@ export default function AuthPage() {
       .eq("status", "active")
       .limit(1);
     router.replace(memberships?.length ? "/workspace" : "/onboarding");
-  }
+  }, [router]);
 
   useEffect(() => {
+    inviteToken.current = new URLSearchParams(window.location.search).get("invite") ?? "";
+    if (inviteToken.current) {
+      setMode("signup");
+      setMessage("You have a BuildProof team invitation. Use the invited email address to continue.");
+      setStatus("idle");
+    }
     const callbackError = new URLSearchParams(window.location.search).get("error_description");
     if (callbackError) {
-      setStatus("error");
-      setMessage(callbackError.replaceAll("+", " "));
+      queueMicrotask(() => {
+        setStatus("error");
+        setMessage(callbackError.replaceAll("+", " "));
+      });
     }
     void continueFromSession();
     const { data: listener } = supabase.auth.onAuthStateChange((event) => {
       if (event === "SIGNED_IN") void continueFromSession();
     });
     return () => listener.subscription.unsubscribe();
-  }, []);
+  }, [continueFromSession]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -45,7 +69,7 @@ export default function AuthPage() {
     setMessage("");
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: `${callbackOrigin}/auth`, shouldCreateUser: mode === "signup" },
+      options: { emailRedirectTo: `${callbackOrigin}/auth${inviteToken.current ? `?invite=${encodeURIComponent(inviteToken.current)}` : ""}`, shouldCreateUser: mode === "signup" },
     });
     if (error) {
       setStatus("error");
@@ -67,7 +91,7 @@ export default function AuthPage() {
     setMessage("");
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: `${callbackOrigin}/auth` },
+      options: { redirectTo: `${callbackOrigin}/auth${inviteToken.current ? `?invite=${encodeURIComponent(inviteToken.current)}` : ""}` },
     });
     if (error) {
       setStatus("error");

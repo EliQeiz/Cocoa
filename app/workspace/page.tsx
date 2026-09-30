@@ -791,7 +791,12 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState({ title: "", description: "", severity: "medium", dueAt: "", deliveryReference: "", vehicleReference: "", manufacturerBatch: "", certificateReference: "", notes: "", packageId: "", batchId: "", quantity: "", unit: "", findings: "", recommendationNumber: "", amount: "", currency: "GHS", rationale: "", requestNumber: "", itemDescription: "", requestQuantity: "", requestUnit: "", neededBy: "", requestPurpose: "", estimatedRate: "" });
   const definition = suiteDefinitions[module];
-  const createLabel: Record<string, string> = { Materials: "Request material", Deliveries: "Receive delivery", Issues: "Raise issue", Risks: "Record risk", Inspections: "Submit inspection", Finance: "Prepare recommendation" };
+  const createLabel: Record<string, string> = { Materials: "Request material", Deliveries: "Receive delivery", Issues: "Raise issue", Risks: "Record risk", Inspections: "Submit inspection", Finance: "Prepare recommendation", Team: "Invite colleague" };
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState("engineer");
+  const [inviteLink, setInviteLink] = useState("");
+  const [inviteRecords, setInviteRecords] = useState<Array<{ id: string; email: string; role: string; expires_at: string; accepted_at: string | null; revoked_at: string | null; expired: boolean }>>([]);
+  const [savingInvitation, setSavingInvitation] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -819,6 +824,12 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
     }
     return { data: (result.data ?? []) as unknown as Record<string, unknown>[], error: result.error?.message ?? "" };
   }, [definition, organizationId, projectId]);
+  const loadInvitations = useCallback(async () => {
+    if (module !== "Team" || !organizationId) return;
+    const { data, error: invitationError } = await supabase.from("organization_invitations").select("id, email, role, expires_at, accepted_at, revoked_at").eq("organization_id", organizationId).order("created_at", { ascending: false });
+    if (invitationError) setError(invitationError.message);
+    else setInviteRecords((data ?? []).map((invite) => ({ ...invite, expired: new Date(invite.expires_at).getTime() < Date.now() })));
+  }, [module, organizationId]);
   useEffect(() => {
     let cancelled = false;
     async function refresh() {
@@ -831,6 +842,18 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
     void refresh();
     return () => { cancelled = true; };
   }, [fetchRecords]);
+  useEffect(() => {
+    if (module !== "Team" || !organizationId) return;
+    let cancelled = false;
+    async function refreshInvitations() {
+      const { data, error: invitationError } = await supabase.from("organization_invitations").select("id, email, role, expires_at, accepted_at, revoked_at").eq("organization_id", organizationId).order("created_at", { ascending: false });
+      if (cancelled) return;
+      if (invitationError) setError(invitationError.message);
+      else setInviteRecords((data ?? []).map((invite) => ({ ...invite, expired: new Date(invite.expires_at).getTime() < Date.now() })));
+    }
+    void refreshInvitations();
+    return () => { cancelled = true; };
+  }, [module, organizationId]);
   const loadPackages = useCallback(async () => {
     if ((module !== "Inspections" && module !== "Deliveries") || !projectId) return [] as Array<{ id: string; name: string; unit: string; approved_quantity: number; received_quantity: number }>;
     const { data } = await supabase.from("material_packages").select("id, name, approved_quantity, received_quantity, boq_lines!inner(unit, boq_versions!inner(status))").eq("project_id", projectId).eq("boq_lines.boq_versions.status", "approved").order("name");
@@ -941,6 +964,40 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
       setSaving(false);
     }
   }
+  async function createTeamInvitation(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    setSuccess("");
+    setInviteLink("");
+    const { data, error: invitationError } = await supabase.rpc("create_organization_invitation", {
+      p_organization_id: organizationId,
+      p_email: inviteEmail.trim().toLowerCase(),
+      p_role: inviteRole,
+    });
+    if (invitationError || !data?.[0]?.invite_token) {
+      setError(invitationError?.message ?? "The invitation could not be created.");
+    } else {
+      const link = `${window.location.origin}/auth?invite=${encodeURIComponent(data[0].invite_token)}`;
+      setInviteLink(link);
+      setInviteEmail("");
+      setSuccess("Invitation created. Copy the secure link and share it with the invited colleague. It expires in 7 days.");
+      await loadInvitations();
+    }
+    setSaving(false);
+  }
+  async function revokeTeamInvitation(invitationId: string) {
+    setSavingInvitation(invitationId);
+    setError("");
+    setSuccess("");
+    const { error: revokeError } = await supabase.rpc("revoke_organization_invitation", { p_invitation_id: invitationId });
+    if (revokeError) setError(revokeError.message);
+    else {
+      setSuccess("Invitation revoked. Its link can no longer be used.");
+      await loadInvitations();
+    }
+    setSavingInvitation("");
+  }
   function setFormValue(field: keyof typeof form, value: string) {
     setForm((current) => ({ ...current, [field]: value }));
   }
@@ -999,7 +1056,14 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
     {success && <p className="suite-success" role="status">{success}</p>}
     {error && <p className="suite-error" role="alert">{createOpen ? "This action could not be saved:" : "Couldn’t load these tenant records:"} {error}</p>}
     {module === "Evidence" && <EvidenceCapture projectId={projectId} organizationId={organizationId} />}
-    {createOpen && <form className="suite-create-form" onSubmit={(event) => void createRecord(event)}>
+    {module === "Team" && inviteLink && <section className="team-invite-result"><strong>Secure invitation link</strong><p>This one-time link is bound to the invited email and expires in seven days. Share it through your normal company channel.</p><div><input aria-label="Secure invitation link" readOnly value={inviteLink} /><button type="button" onClick={() => void navigator.clipboard.writeText(inviteLink).then(() => setSuccess("Invitation link copied."), () => setError("Could not copy automatically. Select and copy the link."))}>Copy link</button></div></section>}
+    {createOpen && module === "Team" && <form className="suite-create-form" onSubmit={(event) => void createTeamInvitation(event)}>
+      <div className="suite-create-title"><div><strong>Invite a colleague</strong><p>Creates an email-bound invitation link. BuildProof will not send email automatically.</p></div><button type="button" aria-label="Close form" onClick={() => setCreateOpen(false)}>×</button></div>
+      <label>Colleague email<input required type="email" maxLength={254} value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="name@organisation.org" /></label>
+      <label>Workspace role<select value={inviteRole} onChange={(event) => setInviteRole(event.target.value)}><option value="engineer">Site engineer</option><option value="site_receiver">Site receiver</option><option value="contractor_manager">Contractor manager</option><option value="quantity_surveyor">Quantity surveyor</option><option value="finance_reviewer">Finance reviewer</option><option value="project_director">Project director</option><option value="funder_viewer">Funder viewer</option><option value="organization_admin">Organisation administrator</option></select></label>
+      <button className="suite-save-button" type="submit" disabled={saving}>{saving ? "Creating invitation…" : "Create invitation link"}</button>
+    </form>}
+    {createOpen && module !== "Team" && <form className="suite-create-form" onSubmit={(event) => void createRecord(event)}>
       <div className="suite-create-title"><div><strong>{createLabel[module]}</strong><p>Saved through an authenticated, role-checked command.</p></div><button type="button" aria-label="Close form" onClick={() => setCreateOpen(false)}>×</button></div>
       {(module === "Issues" || module === "Risks") && <>
         <label>Issue title<input required minLength={3} maxLength={180} value={form.title} onChange={(event) => setFormValue("title", event.target.value)} /></label>
@@ -1044,6 +1108,7 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
       </section>
     </>}
     {module === "Materials" && purchaseRequests.length > 0 && <section className="material-request-log"><h3>Purchase requests</h3>{purchaseRequests.map((request) => <div key={request.id}><strong>{request.request_number}</strong><span>{request.purchase_request_lines?.map((line) => `${line.description} · ${line.requested_quantity} ${line.unit}`).join(", ") || request.purpose || "Material request"}</span><em className={`request-status request-${request.status}`}>{labelize(request.status)}</em></div>)}</section>}
+    {module === "Team" && <section className="approval-queue team-invitation-list"><div className="approval-queue-heading"><div><h3>Workspace invitations</h3><p>Invitation status is visible only to members of this tenant.</p></div><button onClick={() => void loadInvitations()}>Refresh invitations</button></div>{inviteRecords.length ? <div className="suite-table-wrap"><table className="suite-table"><thead><tr><th>Email</th><th>Role</th><th>Status</th><th>Expires</th><th>Action</th></tr></thead><tbody>{inviteRecords.map((invitation) => <tr key={invitation.id}><td>{invitation.email}</td><td>{labelize(invitation.role)}</td><td>{invitation.accepted_at ? "Accepted" : invitation.revoked_at ? "Revoked" : invitation.expired ? "Expired" : "Pending"}</td><td>{new Date(invitation.expires_at).toLocaleDateString()}</td><td>{!invitation.accepted_at && !invitation.revoked_at && !invitation.expired && <button className="team-revoke-button" disabled={savingInvitation === invitation.id} onClick={() => void revokeTeamInvitation(invitation.id)}>{savingInvitation === invitation.id ? "Revoking…" : "Revoke"}</button>}</td></tr>)}</tbody></table></div> : <p className="suite-empty-queue">No invitations have been created yet.</p>}</section>}
     <div className="suite-table-wrap"><table className="suite-table"><thead><tr>{definition.columns.split(", ").filter((key) => key !== "id").map((key) => <th key={key}>{labelize(key)}</th>)}</tr></thead><tbody>
       {loading ? <tr><td colSpan={definition.columns.split(", ").length}>Loading {definition.title.toLowerCase()}…</td></tr> : visibleRows.length ? visibleRows.map((row) => <tr key={String(row.id)}>{definition.columns.split(", ").filter((key) => key !== "id").map((key) => <td key={key}>{row[key] == null || row[key] === "" ? "—" : String(row[key])}</td>)}</tr>) : <tr><td colSpan={definition.columns.split(", ").length}>No {definition.title.toLowerCase()} records found for this project yet.</td></tr>}
     </tbody></table></div>

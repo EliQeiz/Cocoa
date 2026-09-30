@@ -3,6 +3,7 @@
 import { ArrowRight, Building2, Check, ChevronDown, ClipboardList, FileCog, FolderPlus, Home, Landmark, LockKeyhole, LogOut, PackageCheck, ShieldCheck, UsersRound, X } from "lucide-react";
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { supabase } from "../../lib/supabase/client";
 
 type Draft = { organization: string; organizationType: string; country: string; projectName: string; projectCode: string; invites: string[]; roles: string[]; policies: string[]; step: number };
@@ -21,6 +22,8 @@ export default function OnboardingPage() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
   const [message, setMessage] = useState("");
+  const [createdInviteLinks, setCreatedInviteLinks] = useState<Array<{ email: string; url: string }>>([]);
+  const [organizationReady, setOrganizationReady] = useState(false);
   const slug = useMemo(() => slugify(draft.organization), [draft.organization]);
   const update = (values: Partial<Draft>) => setDraft((current) => ({ ...current, ...values }));
 
@@ -49,6 +52,7 @@ export default function OnboardingPage() {
   async function saveAndExit() { if (draftKey) window.localStorage.setItem(draftKey, JSON.stringify(draft)); await supabase.auth.signOut(); router.replace("/auth"); }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (organizationReady) return router.replace("/workspace");
     if (draft.step < 6) return moveTo(draft.step + 1);
     if (!draft.organization.trim() || !draft.projectName.trim() || !draft.projectCode.trim()) { setStatus("error"); setMessage("Add an organisation name and your first project name and code before launch."); return; }
     setStatus("saving"); setMessage("");
@@ -56,7 +60,28 @@ export default function OnboardingPage() {
     if (organizationError || !organizationId) { setStatus("error"); setMessage(organizationError?.message || "We could not create your organisation."); return; }
     const { error: projectError } = await supabase.rpc("create_first_project", { p_organization_id: organizationId, p_project_code: draft.projectCode, p_name: draft.projectName, p_client_name: null });
     if (projectError) { setStatus("error"); setMessage(projectError.message); return; }
-    if (draftKey) window.localStorage.removeItem(draftKey); router.replace("/workspace");
+    const createdLinks: Array<{ email: string; url: string }> = [];
+    for (const email of draft.invites) {
+      const { data, error: inviteError } = await supabase.rpc("create_organization_invitation", { p_organization_id: organizationId, p_email: email, p_role: "engineer" });
+      if (inviteError || !data?.[0]?.invite_token) {
+        setStatus("error");
+        setMessage(`Your workspace and first project are ready, but an invitation for ${email} could not be created: ${inviteError?.message ?? "No invite link was returned."}`);
+        setCreatedInviteLinks(createdLinks);
+        setOrganizationReady(true);
+        if (draftKey) window.localStorage.removeItem(draftKey);
+        return;
+      }
+      createdLinks.push({ email, url: `${window.location.origin}/auth?invite=${encodeURIComponent(data[0].invite_token)}` });
+    }
+    if (draftKey) window.localStorage.removeItem(draftKey);
+    if (createdLinks.length) {
+      setCreatedInviteLinks(createdLinks);
+      setOrganizationReady(true);
+      setStatus("idle");
+      setMessage("Your workspace is ready. Copy each secure invitation link and share it with the invited colleague.");
+      return;
+    }
+    router.replace("/workspace");
   }
 
   const progress = Math.round(((draft.step - 1) / 5) * 100);
@@ -72,10 +97,10 @@ export default function OnboardingPage() {
           <SetupCard number={4} active={draft.step === 4} complete={draft.step > 4} icon={<FileCog size={22} />} title="Policy settings" detail="Start with the evidence controls that fit this project." status={draft.policies.length ? "Ready" : undefined} onClick={() => moveTo(4)}><div className="role-chips">{["Evidence retention", "Material verification", "Approvals"].map((policy) => <button type="button" className={draft.policies.includes(policy) ? "selected" : ""} onClick={() => update({ policies: toggle(draft.policies, policy) })} key={policy}>{draft.policies.includes(policy) && <Check size={13} />}{policy}</button>)}</div></SetupCard>
           <SetupCard number={5} active={draft.step === 5} complete={draft.step > 5} icon={<FolderPlus size={22} />} title="Create your first project" detail="Start the evidence record you will manage in BuildProof." status={draft.projectName && draft.projectCode ? "Ready" : undefined} onClick={() => moveTo(5)}><div className="setup-grid"><label>Project name<input value={draft.projectName} onChange={(event) => update({ projectName: event.target.value })} placeholder="Northbank Civic Centre" /></label><label>Project code<input value={draft.projectCode} onChange={(event) => update({ projectCode: event.target.value })} placeholder="PRJ-1047" /></label></div></SetupCard>
           <SetupCard number={6} active={draft.step === 6} complete={false} icon={<Check size={22} />} title="Review and launch" detail="Confirm the setup and create your protected workspace." status={draft.step === 6 ? "Ready to launch" : undefined} onClick={() => moveTo(6)} />
-          {message && <p className={`form-message ${status === "error" ? "is-error" : ""}`}>{message}</p>}<div className="setup-actions"><button type="button" className="secondary-action" disabled={draft.step === 1} onClick={() => moveTo(draft.step - 1)}>Back</button><button className="primary-button" disabled={status === "saving"}>{status === "saving" ? "Creating your workspace…" : draft.step === 6 ? <>Launch workspace <ArrowRight size={18} /></> : <>Continue <ArrowRight size={18} /></>}</button></div>
+          {message && <p className={`form-message ${status === "error" ? "is-error" : ""}`} role={status === "error" ? "alert" : "status"}>{message}</p>}{createdInviteLinks.length > 0 && <section className="onboarding-invite-links"><h2>Share team invitations</h2><p>Each link is email-bound and expires after seven days. BuildProof does not send email automatically.</p>{createdInviteLinks.map((invite) => <div key={invite.email}><strong>{invite.email}</strong><input aria-label={`Invitation link for ${invite.email}`} readOnly value={invite.url} /><button type="button" onClick={() => void navigator.clipboard.writeText(invite.url).then(() => setMessage(`Invitation link for ${invite.email} copied.`), () => setMessage("Select and copy the invitation link manually."))}>Copy link</button></div>)}</section>}<div className="setup-actions"><button type="button" className="secondary-action" disabled={draft.step === 1 || organizationReady} onClick={() => moveTo(draft.step - 1)}>Back</button><button className="primary-button" disabled={status === "saving"} type={organizationReady ? "button" : "submit"} onClick={organizationReady ? () => router.replace("/workspace") : undefined}>{status === "saving" ? "Creating your workspace…" : organizationReady ? <>Open workspace <ArrowRight size={18} /></> : draft.step === 6 ? <>Launch workspace <ArrowRight size={18} /></> : <>Continue <ArrowRight size={18} /></>}</button></div>
         </form>
       </section>
-      <aside className="onboarding-summary"><article className="progress-summary"><h2>Setup progress</h2><div className="summary-progress"><div style={{ "--progress": progress } as React.CSSProperties}><b>{progress}%</b></div><ol>{setupSteps.map((label, index) => <li className={index + 1 < draft.step ? "done" : index + 1 === draft.step ? "current" : ""} key={label}><i>{index + 1 < draft.step ? <Check size={12} /> : index + 1}</i>{label}</li>)}</ol></div></article><article className="workspace-preview"><div className="panel-heading"><h2>Workspace preview</h2><button type="button" onClick={() => moveTo(5)}>View all →</button></div><img src="/images/buildproof-project-preview.png" alt="Construction project preview" /><h3>{draft.organization || "Your organisation"} <span>{draft.organizationType}</span></h3><p>⌖ Accra, Greater Accra</p><div className="preview-metrics"><span><b>0</b>Projects</span><span><b>{team.length}</b>Team members</span><span><b>{draft.roles.length || "—"}</b>Roles</span><span><b>{draft.policies.length || "—"}</b>Policies</span></div></article><article className="tenant-note-card"><LockKeyhole size={23} /><p><strong>Your data, your organisation</strong><span>Information stays isolated to this tenant and is visible only to authorised team members.</span></p></article></aside>
+      <aside className="onboarding-summary"><article className="progress-summary"><h2>Setup progress</h2><div className="summary-progress"><div style={{ "--progress": progress } as React.CSSProperties}><b>{progress}%</b></div><ol>{setupSteps.map((label, index) => <li className={index + 1 < draft.step ? "done" : index + 1 === draft.step ? "current" : ""} key={label}><i>{index + 1 < draft.step ? <Check size={12} /> : index + 1}</i>{label}</li>)}</ol></div></article><article className="workspace-preview"><div className="panel-heading"><h2>Workspace preview</h2><button type="button" onClick={() => moveTo(5)}>View all →</button></div><Image src="/images/buildproof-project-preview.png" width={560} height={220} alt="Construction project preview" /><h3>{draft.organization || "Your organisation"} <span>{draft.organizationType}</span></h3><p>⌖ Accra, Greater Accra</p><div className="preview-metrics"><span><b>0</b>Projects</span><span><b>{team.length}</b>Team members</span><span><b>{draft.roles.length || "—"}</b>Roles</span><span><b>{draft.policies.length || "—"}</b>Policies</span></div></article><article className="tenant-note-card"><LockKeyhole size={23} /><p><strong>Your data, your organisation</strong><span>Information stays isolated to this tenant and is visible only to authorised team members.</span></p></article></aside>
     </div></section>
   </section></main>;
 }

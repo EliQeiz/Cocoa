@@ -82,6 +82,18 @@ async function main() {
               and column_name = 'submitted_by'
           ) as submitter_recorded;
       `);
+    const invitationCommands = await client.query(`
+        select
+          to_regprocedure('public.create_organization_invitation(uuid,text,public.membership_role)') is not null as create_available,
+          to_regprocedure('public.accept_organization_invitation(text)') is not null as accept_available,
+          to_regprocedure('public.revoke_organization_invitation(uuid)') is not null as revoke_available,
+          exists (
+            select 1 from information_schema.tables
+            where table_schema = 'public' and table_name = 'organization_invitations'
+          ) as table_available,
+          coalesce((select relrowsecurity from pg_class where oid = 'public.organization_invitations'::regclass), false) as rls_enabled,
+          not has_column_privilege('authenticated', 'public.organization_invitations', 'token_hash', 'select') as token_digest_private;
+      `);
 
     const summary = {
       tables: tables.rows.map((row) => row.table_name),
@@ -94,19 +106,31 @@ async function main() {
       inspectionSubmissionAvailable: inspectionCommands.rows[0].submit_available,
       independentInspectionReviewAvailable: inspectionCommands.rows[0].review_available,
       inspectionSubmitterRecorded: inspectionCommands.rows[0].submitter_recorded,
+      invitationCreationAvailable: invitationCommands.rows[0].create_available,
+      invitationAcceptanceAvailable: invitationCommands.rows[0].accept_available,
+      invitationRevocationAvailable: invitationCommands.rows[0].revoke_available,
+      invitationTableAvailable: invitationCommands.rows[0].table_available,
+      invitationRlsEnabled: invitationCommands.rows[0].rls_enabled,
+      invitationTokenDigestPrivate: invitationCommands.rows[0].token_digest_private,
     };
     console.log(JSON.stringify(summary, null, 2));
 
     if (
-      summary.tables.length !== 26 ||
-      summary.rlsEnabledTableCount !== 26 ||
-      summary.policyCount !== 26 ||
+      summary.tables.length !== 27 ||
+      summary.rlsEnabledTableCount !== 27 ||
+      summary.policyCount !== 27 ||
       summary.evidenceStoragePolicyCount !== 3 ||
       !summary.evidenceRegistrationCommandAvailable ||
       !summary.materialReceiptCommandAvailable ||
       !summary.inspectionSubmissionAvailable ||
       !summary.independentInspectionReviewAvailable ||
       !summary.inspectionSubmitterRecorded ||
+      !summary.invitationCreationAvailable ||
+      !summary.invitationAcceptanceAvailable ||
+      !summary.invitationRevocationAvailable ||
+      !summary.invitationTableAvailable ||
+      !summary.invitationRlsEnabled ||
+      !summary.invitationTokenDigestPrivate ||
       !summary.evidenceBucket ||
       summary.evidenceBucket.public
     ) {
