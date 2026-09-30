@@ -72,6 +72,16 @@ async function main() {
           'public.receive_project_material_delivery(uuid,uuid,numeric,text,text,text,text,text)'
         ) is not null as available;
       `);
+    const inspectionCommands = await client.query(`
+        select
+          to_regprocedure('public.create_project_batch_inspection(uuid,uuid,uuid,numeric,text,uuid)') is not null as submit_available,
+          to_regprocedure('public.review_project_inspection(uuid,public.verification_status,text)') is not null as review_available,
+          exists (
+            select 1 from information_schema.columns
+            where table_schema = 'public' and table_name = 'verifications'
+              and column_name = 'submitted_by'
+          ) as submitter_recorded;
+      `);
 
     const summary = {
       tables: tables.rows.map((row) => row.table_name),
@@ -81,6 +91,9 @@ async function main() {
       evidenceStoragePolicyCount: evidencePolicies.rows[0].count,
       evidenceRegistrationCommandAvailable: evidenceCommand.rows[0].available,
       materialReceiptCommandAvailable: receiptCommand.rows[0].available,
+      inspectionSubmissionAvailable: inspectionCommands.rows[0].submit_available,
+      independentInspectionReviewAvailable: inspectionCommands.rows[0].review_available,
+      inspectionSubmitterRecorded: inspectionCommands.rows[0].submitter_recorded,
     };
     console.log(JSON.stringify(summary, null, 2));
 
@@ -91,6 +104,9 @@ async function main() {
       summary.evidenceStoragePolicyCount !== 3 ||
       !summary.evidenceRegistrationCommandAvailable ||
       !summary.materialReceiptCommandAvailable ||
+      !summary.inspectionSubmissionAvailable ||
+      !summary.independentInspectionReviewAvailable ||
+      !summary.inspectionSubmitterRecorded ||
       !summary.evidenceBucket ||
       summary.evidenceBucket.public
     ) {

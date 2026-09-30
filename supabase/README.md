@@ -1,5 +1,9 @@
-# Supabase migrations
+# Supabase schema and operations
 
-The BuildProof migration in this directory is a reviewed design baseline. It has not been applied to the linked Supabase project.
+The linked BuildProof project has the foundation, onboarding, workspace-command, evidence-capture, material-receipt and inspection-review migrations applied through `202609300006_independent_inspection_review.sql`.
 
-Apply migrations only after peer review and after the product owners confirm the pilot roles, retention policy, and BoQ import requirements. Browser clients use the Supabase publishable key under Row Level Security; the service-role key must never be committed or exposed to the browser.
+Apply new migrations in filename order with `npm run db:migrate -- <migration-filename>`. The command reads the database connection from `.env.local`; never print or commit those credentials. `npm run db:verify` checks the tenant tables, row-level security, private evidence bucket, upload policies and required workflow commands.
+
+Browser clients use the Supabase publishable key under Row Level Security. The service-role key must never be committed or exposed to the browser. Evidence objects are private; signed preview URLs are temporary. SHA-256 is calculated in the browser and is an integrity hint, not a server-verified signature.
+
+`seed/buildproof-demo-workspace.sql` is synthetic presentation data. Do not run it against a customer or production workspace without explicit approval.

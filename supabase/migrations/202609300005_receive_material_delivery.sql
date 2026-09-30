@@ -108,7 +108,8 @@ begin
   ) returning id into v_batch_id;
 
   update public.material_packages
-  set received_quantity = received_quantity + p_received_quantity
+  set received_quantity = received_quantity + p_received_quantity,
+      status = 'pending_review'
   where id = p_material_package_id;
 
   insert into public.audit_events (

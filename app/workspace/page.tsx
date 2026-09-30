@@ -49,6 +49,16 @@ type MaterialRow = {
   style: "is-verified" | "is-review" | "is-flagged";
   visualIndex: number;
 };
+type InspectionReviewRow = {
+  id: string;
+  submitted_by: string;
+  observed_quantity: number;
+  unit: string | null;
+  findings: string;
+  created_at: string;
+  material_packages: { name: string } | null;
+  material_batches: { manufacturer_batch_reference: string | null } | null;
+};
 type LedgerRow = {
   id: string;
   date: string;
@@ -766,6 +776,11 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [purchaseRequests, setPurchaseRequests] = useState<Array<{ id: string; request_number: string; status: string; purpose: string | null; needed_by_date: string | null; requested_at: string; purchase_request_lines?: Array<{ description: string; requested_quantity: number; unit: string }> }>>([]);
   const [approvalNotes, setApprovalNotes] = useState<Record<string, string>>({});
+  const [inspectionQueue, setInspectionQueue] = useState<InspectionReviewRow[]>([]);
+  const [currentUserId, setCurrentUserId] = useState("");
+  const [inspectionNotes, setInspectionNotes] = useState<Record<string, string>>({});
+  const [savingInspection, setSavingInspection] = useState("");
+  const [batchOptions, setBatchOptions] = useState<Array<{ id: string; reference: string; received_quantity: number; unit: string }>>([]);
   const [packageOptions, setPackageOptions] = useState<Array<{ id: string; name: string; unit: string; approved_quantity: number; received_quantity: number }>>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -774,9 +789,19 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
   const [savingRequest, setSavingRequest] = useState("");
   const [filter, setFilter] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
-  const [form, setForm] = useState({ title: "", description: "", severity: "medium", dueAt: "", deliveryReference: "", vehicleReference: "", manufacturerBatch: "", certificateReference: "", notes: "", packageId: "", quantity: "", unit: "", findings: "", recommendationNumber: "", amount: "", currency: "GHS", rationale: "", requestNumber: "", itemDescription: "", requestQuantity: "", requestUnit: "", neededBy: "", requestPurpose: "", estimatedRate: "" });
+  const [form, setForm] = useState({ title: "", description: "", severity: "medium", dueAt: "", deliveryReference: "", vehicleReference: "", manufacturerBatch: "", certificateReference: "", notes: "", packageId: "", batchId: "", quantity: "", unit: "", findings: "", recommendationNumber: "", amount: "", currency: "GHS", rationale: "", requestNumber: "", itemDescription: "", requestQuantity: "", requestUnit: "", neededBy: "", requestPurpose: "", estimatedRate: "" });
   const definition = suiteDefinitions[module];
   const createLabel: Record<string, string> = { Materials: "Request material", Deliveries: "Receive delivery", Issues: "Raise issue", Risks: "Record risk", Inspections: "Submit inspection", Finance: "Prepare recommendation" };
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadCurrentUser() {
+      const { data } = await supabase.auth.getUser();
+      if (!cancelled) setCurrentUserId(data.user?.id ?? "");
+    }
+    void loadCurrentUser();
+    return () => { cancelled = true; };
+  }, []);
 
   const fetchRecords = useCallback(async () => {
     if (!definition || !projectId || !organizationId) return { data: [] as unknown as Record<string, unknown>[], error: "" };
@@ -824,6 +849,25 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
     void refreshPackages();
     return () => { cancelled = true; };
   }, [loadPackages, module]);
+  useEffect(() => {
+    let cancelled = false;
+    async function refreshBatches() {
+      if (module !== "Inspections" || !form.packageId) {
+        if (!cancelled) setBatchOptions([]);
+        return;
+      }
+      const { data } = await supabase.from("material_batches").select("id, manufacturer_batch_reference, delivery_lines!inner(received_quantity, unit)").eq("project_id", projectId).eq("material_package_id", form.packageId).eq("status", "pending_review").order("created_at", { ascending: false });
+      if (cancelled) return;
+      const batches = (data ?? []).map((row) => {
+        const line = Array.isArray(row.delivery_lines) ? row.delivery_lines[0] : row.delivery_lines;
+        return { id: row.id, reference: row.manufacturer_batch_reference || "Unlabelled batch", received_quantity: Number(line?.received_quantity ?? 0), unit: line?.unit ?? "units" };
+      });
+      setBatchOptions(batches);
+      setForm((current) => ({ ...current, batchId: batches.some((batch) => batch.id === current.batchId) ? current.batchId : "" }));
+    }
+    void refreshBatches();
+    return () => { cancelled = true; };
+  }, [form.packageId, module, projectId]);
   const loadPurchaseRequests = useCallback(async () => {
     if ((module !== "Approvals" && module !== "Materials") || !projectId) return [];
     let query = supabase.from("purchase_requests").select("id, request_number, status, purpose, needed_by_date, requested_at, purchase_request_lines(description, requested_quantity, unit)").eq("project_id", projectId);
@@ -831,15 +875,21 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
     const { data } = await query.order("created_at", { ascending: false });
     return (data ?? []) as unknown as typeof purchaseRequests;
   }, [module, projectId]);
+  const loadInspectionQueue = useCallback(async () => {
+    if (module !== "Approvals" || !projectId) return [];
+    const { data } = await supabase.from("verifications").select("id, submitted_by, observed_quantity, unit, findings, created_at, material_packages!inner(name), material_batches(manufacturer_batch_reference)").eq("project_id", projectId).eq("status", "submitted").not("submitted_by", "is", null).order("created_at", { ascending: true });
+    return (data ?? []) as unknown as InspectionReviewRow[];
+  }, [module, projectId]);
   useEffect(() => {
     let cancelled = false;
     async function refreshRequests() {
-      const requests = await loadPurchaseRequests();
+      const [requests, inspections] = await Promise.all([loadPurchaseRequests(), loadInspectionQueue()]);
       if (!cancelled) setPurchaseRequests(requests);
+      if (!cancelled) setInspectionQueue(inspections);
     }
     void refreshRequests();
     return () => { cancelled = true; };
-  }, [loadPurchaseRequests]);
+  }, [loadInspectionQueue, loadPurchaseRequests]);
   async function loadRecords() {
     setLoading(true);
     const result = await fetchRecords();
@@ -864,8 +914,8 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
       command = "receive_project_material_delivery";
       parameters = { p_project_id: projectId, p_material_package_id: form.packageId, p_received_quantity: Number(form.quantity), p_delivery_reference: form.deliveryReference, p_vehicle_reference: form.vehicleReference, p_manufacturer_batch_reference: form.manufacturerBatch, p_certificate_reference: form.certificateReference, p_condition_notes: form.notes };
     } else if (module === "Inspections") {
-      command = "create_project_inspection";
-      parameters = { p_project_id: projectId, p_material_package_id: form.packageId, p_observed_quantity: Number(form.quantity), p_unit: form.unit, p_findings: form.findings, p_project_site_id: null };
+      command = "create_project_batch_inspection";
+      parameters = { p_project_id: projectId, p_material_package_id: form.packageId, p_material_batch_id: form.batchId, p_observed_quantity: Number(form.quantity), p_findings: form.findings, p_project_site_id: null };
     } else if (module === "Finance") {
       command = "create_project_release_recommendation";
       parameters = { p_project_id: projectId, p_recommendation_number: form.recommendationNumber, p_recommended_amount: form.amount ? Number(form.amount) : null, p_currency_code: form.currency, p_rationale: form.rationale };
@@ -880,7 +930,7 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
       } else {
         setSuccess(`${createLabel[module]} saved to the project record.`);
         setCreateOpen(false);
-        setForm({ title: "", description: "", severity: "medium", dueAt: "", deliveryReference: "", vehicleReference: "", manufacturerBatch: "", certificateReference: "", notes: "", packageId: "", quantity: "", unit: "", findings: "", recommendationNumber: "", amount: "", currency: "GHS", rationale: "", requestNumber: "", itemDescription: "", requestQuantity: "", requestUnit: "", neededBy: "", requestPurpose: "", estimatedRate: "" });
+        setForm({ title: "", description: "", severity: "medium", dueAt: "", deliveryReference: "", vehicleReference: "", manufacturerBatch: "", certificateReference: "", notes: "", packageId: "", batchId: "", quantity: "", unit: "", findings: "", recommendationNumber: "", amount: "", currency: "GHS", rationale: "", requestNumber: "", itemDescription: "", requestQuantity: "", requestUnit: "", neededBy: "", requestPurpose: "", estimatedRate: "" });
         await loadRecords();
         if (module === "Deliveries") setPackageOptions(await loadPackages());
         if (module === "Materials") setPurchaseRequests(await loadPurchaseRequests());
@@ -913,6 +963,25 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
       await loadRecords();
     }
     setSavingRequest("");
+  }
+  async function decideInspection(verificationId: string, decision: "accepted" | "rejected") {
+    const rationale = inspectionNotes[verificationId]?.trim() ?? "";
+    if (rationale.length < 3) {
+      setError("Add a review rationale before recording the inspection decision.");
+      return;
+    }
+    setSavingInspection(verificationId);
+    setError("");
+    setSuccess("");
+    const { error: reviewError } = await supabase.rpc("review_project_inspection", { p_verification_id: verificationId, p_decision: decision, p_rationale: rationale });
+    if (reviewError) setError(reviewError.message);
+    else {
+      setSuccess(`Inspection ${decision} and saved to the audit history.`);
+      setInspectionNotes((current) => ({ ...current, [verificationId]: "" }));
+      setInspectionQueue(await loadInspectionQueue());
+      await loadRecords();
+    }
+    setSavingInspection("");
   }
 
   if (!definition) return null;
@@ -951,18 +1020,29 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
         <label>Purpose / specification<input maxLength={2000} value={form.requestPurpose} onChange={(event) => setFormValue("requestPurpose", event.target.value)} /></label>
       </>}
       {module === "Inspections" && <>
-        <label>Material package<select required value={form.packageId} onChange={(event) => setFormValue("packageId", event.target.value)}><option value="">Select a project package</option>{packageOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-        <div className="suite-form-row"><label>Observed quantity<input required type="number" min="0" step="0.001" value={form.quantity} onChange={(event) => setFormValue("quantity", event.target.value)} /></label><label>Unit<input required maxLength={24} value={form.unit} onChange={(event) => setFormValue("unit", event.target.value)} /></label></div>
+        <label>Material package<select required value={form.packageId} onChange={(event) => { setFormValue("packageId", event.target.value); setFormValue("batchId", ""); }}><option value="">Select a project package</option>{packageOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+        <label>Received batch<select required value={form.batchId} onChange={(event) => setFormValue("batchId", event.target.value)}><option value="">Select an uninspected batch</option>{batchOptions.map((batch) => <option key={batch.id} value={batch.id}>{batch.reference} · {batch.received_quantity} {batch.unit}</option>)}</select></label>
+        <label>Quantity inspected<input required type="number" min="0.001" step="0.001" max={batchOptions.find((batch) => batch.id === form.batchId)?.received_quantity} value={form.quantity} onChange={(event) => setFormValue("quantity", event.target.value)} />{batchOptions.find((batch) => batch.id === form.batchId) && <small>Batch unit: {batchOptions.find((batch) => batch.id === form.batchId)?.unit}. Acceptance requires inspection of the full received quantity.</small>}</label>
         <label>Inspection findings<textarea required minLength={3} maxLength={4000} rows={3} value={form.findings} onChange={(event) => setFormValue("findings", event.target.value)} /></label>
-        {!packageOptions.length && <p className="suite-form-hint">Add a material package before submitting an inspection.</p>}
+        {!packageOptions.length && <p className="suite-form-hint">Add a material package and record a delivery before submitting an inspection.</p>}
+        {packageOptions.length > 0 && form.packageId && !batchOptions.length && <p className="suite-form-hint">There are no uninspected batches for this package. Record a new delivery first.</p>}
       </>}
       {module === "Finance" && <>
         <div className="suite-form-row"><label>Recommendation number<input required minLength={2} maxLength={48} value={form.recommendationNumber} onChange={(event) => setFormValue("recommendationNumber", event.target.value)} /></label><label>Amount<input type="number" min="0" step="0.01" value={form.amount} onChange={(event) => setFormValue("amount", event.target.value)} /></label><label>Currency<select value={form.currency} onChange={(event) => setFormValue("currency", event.target.value)}><option value="GHS">GHS</option><option value="USD">USD</option><option value="EUR">EUR</option><option value="GBP">GBP</option></select></label></div>
         <label>Rationale<textarea required minLength={3} maxLength={4000} rows={3} value={form.rationale} onChange={(event) => setFormValue("rationale", event.target.value)} /></label>
       </>}
-      <button className="suite-save-button" type="submit" disabled={saving || ((module === "Inspections" || module === "Deliveries") && !packageOptions.length)}>{saving ? "Saving…" : module === "Deliveries" ? "Record receipt" : "Save record"}</button>
+      <button className="suite-save-button" type="submit" disabled={saving || (module === "Deliveries" && !packageOptions.length) || (module === "Inspections" && (!packageOptions.length || !batchOptions.length))}>{saving ? "Saving…" : module === "Deliveries" ? "Record receipt" : module === "Inspections" ? "Submit for review" : "Save record"}</button>
     </form>}
-    {module === "Approvals" && <section className="approval-queue" aria-labelledby="approval-queue-title"><div className="approval-queue-heading"><div><h3 id="approval-queue-title">Requests awaiting a decision</h3><p>Each decision updates the request and writes to the approval and audit history.</p></div><button onClick={async () => setPurchaseRequests(await loadPurchaseRequests())}>Refresh queue</button></div>{purchaseRequests.length ? <div className="approval-request-list">{purchaseRequests.map((request) => <article className="approval-request" key={request.id}><div><strong>{request.request_number}</strong><span className={`request-status request-${request.status}`}>{labelize(request.status)}</span></div>{request.purchase_request_lines?.map((line, index) => <p key={`${request.id}-line-${index}`}><strong>{line.description}</strong> · {line.requested_quantity} {line.unit}</p>)}<p>{request.purpose || "No additional purpose provided."}</p>{request.needed_by_date && <small>Needed by {request.needed_by_date}</small>}<label>Decision rationale<textarea required minLength={3} rows={2} value={approvalNotes[request.id] ?? ""} onChange={(event) => setApprovalNotes((current) => ({ ...current, [request.id]: event.target.value }))} placeholder="Record the reason for this decision" /></label><div className="approval-actions"><button disabled={savingRequest === request.id} onClick={() => void decideRequest(request.id, "approved")}>Approve request</button><button disabled={savingRequest === request.id} onClick={() => void decideRequest(request.id, "queried")}>Request changes</button><button disabled={savingRequest === request.id} onClick={() => void decideRequest(request.id, "rejected")}>Reject</button></div></article>)}</div> : <p className="suite-empty-queue">No purchase requests are awaiting a decision. Submitted material requests will appear here.</p>}</section>}
+    {module === "Approvals" && <>
+      <section className="approval-queue" aria-labelledby="approval-queue-title">
+        <div className="approval-queue-heading"><div><h3 id="approval-queue-title">Procurement requests</h3><p>Each decision updates the request and writes to the approval and audit history.</p></div><button onClick={async () => setPurchaseRequests(await loadPurchaseRequests())}>Refresh queue</button></div>
+        {purchaseRequests.length ? <div className="approval-request-list">{purchaseRequests.map((request) => <article className="approval-request" key={request.id}><div><strong>{request.request_number}</strong><span className={`request-status request-${request.status}`}>{labelize(request.status)}</span></div>{request.purchase_request_lines?.map((line, index) => <p key={`${request.id}-line-${index}`}><strong>{line.description}</strong> · {line.requested_quantity} {line.unit}</p>)}<p>{request.purpose || "No additional purpose provided."}</p>{request.needed_by_date && <small>Needed by {request.needed_by_date}</small>}<label>Decision rationale<textarea required minLength={3} rows={2} value={approvalNotes[request.id] ?? ""} onChange={(event) => setApprovalNotes((current) => ({ ...current, [request.id]: event.target.value }))} placeholder="Record the reason for this decision" /></label><div className="approval-actions"><button disabled={savingRequest === request.id} onClick={() => void decideRequest(request.id, "approved")}>Approve request</button><button disabled={savingRequest === request.id} onClick={() => void decideRequest(request.id, "queried")}>Request changes</button><button disabled={savingRequest === request.id} onClick={() => void decideRequest(request.id, "rejected")}>Reject</button></div></article>)}</div> : <p className="suite-empty-queue">No purchase requests are awaiting a decision.</p>}
+      </section>
+      <section className="approval-queue" aria-labelledby="inspection-queue-title">
+        <div className="approval-queue-heading"><div><h3 id="inspection-queue-title">Independent inspection review</h3><p>Reviewers cannot accept or reject inspections they submitted. Decisions update batch status and verified quantities.</p></div><button onClick={async () => setInspectionQueue(await loadInspectionQueue())}>Refresh queue</button></div>
+        {inspectionQueue.length ? <div className="approval-request-list">{inspectionQueue.map((inspection) => <article className="approval-request" key={inspection.id}><div><strong>{inspection.material_packages?.name ?? "Material inspection"}</strong><span className="request-status request-submitted">Awaiting review</span></div><p><strong>Batch:</strong> {inspection.material_batches?.manufacturer_batch_reference || "Unlabelled batch"} · {inspection.observed_quantity} {inspection.unit ?? "units"}</p><p>{inspection.findings}</p><small>Submitted {new Date(inspection.created_at).toLocaleString()}</small>{inspection.submitted_by === currentUserId ? <p className="suite-form-hint">You submitted this inspection. Another authorized reviewer must make the decision.</p> : <><label>Review rationale<textarea required minLength={3} rows={2} value={inspectionNotes[inspection.id] ?? ""} onChange={(event) => setInspectionNotes((current) => ({ ...current, [inspection.id]: event.target.value }))} placeholder="Record inspection findings and the basis for your decision" /></label><div className="approval-actions"><button disabled={savingInspection === inspection.id} onClick={() => void decideInspection(inspection.id, "accepted")}>Accept batch</button><button disabled={savingInspection === inspection.id} onClick={() => void decideInspection(inspection.id, "rejected")}>Reject batch</button></div></>}</article>)}</div> : <p className="suite-empty-queue">No inspections are awaiting independent review.</p>}
+      </section>
+    </>}
     {module === "Materials" && purchaseRequests.length > 0 && <section className="material-request-log"><h3>Purchase requests</h3>{purchaseRequests.map((request) => <div key={request.id}><strong>{request.request_number}</strong><span>{request.purchase_request_lines?.map((line) => `${line.description} · ${line.requested_quantity} ${line.unit}`).join(", ") || request.purpose || "Material request"}</span><em className={`request-status request-${request.status}`}>{labelize(request.status)}</em></div>)}</section>}
     <div className="suite-table-wrap"><table className="suite-table"><thead><tr>{definition.columns.split(", ").filter((key) => key !== "id").map((key) => <th key={key}>{labelize(key)}</th>)}</tr></thead><tbody>
       {loading ? <tr><td colSpan={definition.columns.split(", ").length}>Loading {definition.title.toLowerCase()}…</td></tr> : visibleRows.length ? visibleRows.map((row) => <tr key={String(row.id)}>{definition.columns.split(", ").filter((key) => key !== "id").map((key) => <td key={key}>{row[key] == null || row[key] === "" ? "—" : String(row[key])}</td>)}</tr>) : <tr><td colSpan={definition.columns.split(", ").length}>No {definition.title.toLowerCase()} records found for this project yet.</td></tr>}
