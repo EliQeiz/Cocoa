@@ -24,7 +24,7 @@ import {
   X,
 } from "lucide-react";
 import Image from "next/image";
-import { ReactNode, useEffect, useState } from "react";
+import { ReactNode, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase/client";
 
@@ -121,8 +121,10 @@ export default function WorkspacePage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const [organization, setOrganization] = useState("Your organisation");
+  const [organizationId, setOrganizationId] = useState("");
   const [project, setProject] = useState("Your first project");
   const [projectId, setProjectId] = useState("");
+  const [suiteName, setSuiteName] = useState<string | null>(null);
   const [projectCode, setProjectCode] = useState("—");
   const [projectClient, setProjectClient] = useState("Public infrastructure");
   const [projectRange, setProjectRange] = useState("Project dates");
@@ -146,6 +148,7 @@ export default function WorkspacePage() {
         .limit(1);
       const organizationRow = organizations?.[0];
       if (!organizationRow) return router.replace("/onboarding");
+      setOrganizationId(organizationRow.id);
       setOrganization(organizationRow.display_name);
 
       const { data: projects } = await supabase
@@ -357,21 +360,13 @@ export default function WorkspacePage() {
     Home: "workspace-overview",
     Overview: "workspace-overview",
     Projects: "workspace-overview",
-    Evidence: "evidence-ledger",
-    Materials: "material-trace",
-    Deliveries: "evidence-ledger",
-    Approvals: "release-recommendation",
-    Issues: "project-health",
-    Reports: "evidence-ledger",
-    Team: "project-health",
-    Inspections: "project-health",
-    Risks: "project-health",
-    Finance: "release-recommendation",
   };
   function navigate(label: string) {
     setActiveSection(label);
     setSidebarOpen(false);
     setOpenMenu(null);
+    setSuiteName(label === "Home" || label === "Overview" ? null : label);
+    if (label !== "Home" && label !== "Overview") return;
     document
       .getElementById(sectionTargets[label] ?? "workspace-overview")
       ?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -453,7 +448,7 @@ export default function WorkspacePage() {
             </button>
           ))}
         </nav>
-        <button className={`sidebar-settings ${activeSection === "Settings" ? "nav-active" : ""}`} onClick={() => { setActiveSection("Settings"); setSettingsOpen(true); }}>
+        <button className={`sidebar-settings ${activeSection === "Settings" ? "nav-active" : ""}`} onClick={() => { setSuiteName(null); setActiveSection("Settings"); setSettingsOpen(true); }}>
           <Settings size={19} />
           <span>Settings</span>
         </button>
@@ -492,7 +487,7 @@ export default function WorkspacePage() {
               <ChevronDown size={15} />
             </button>
             {openMenu === "notifications" && <div className="header-popover"><strong>Notifications</strong><p>{ledger.length ? `${ledger.length} recent project updates are available.` : "You’re all caught up."}</p><button onClick={() => navigate("Evidence")}>Review project activity</button></div>}
-            {openMenu === "account" && <div className="header-popover account-popover"><strong>Jordan Lee</strong><button onClick={() => { setActiveSection("Settings"); setSettingsOpen(true); setOpenMenu(null); }}>Workspace settings</button><button onClick={() => void signOut()}>Sign out</button></div>}
+            {openMenu === "account" && <div className="header-popover account-popover"><strong>Jordan Lee</strong><button onClick={() => { setSuiteName(null); setActiveSection("Settings"); setSettingsOpen(true); setOpenMenu(null); }}>Workspace settings</button><button onClick={() => void signOut()}>Sign out</button></div>}
           </div>
         </header>
         <nav className="project-tabs">
@@ -510,7 +505,15 @@ export default function WorkspacePage() {
           </button>
           {openMenu === "project" && <div className="project-action-menu"><strong>Project actions</strong><button onClick={() => void updateProjectStatus(projectStatus === "active" ? "on_hold" : "active")}>{projectStatus === "active" ? "Place on hold" : "Mark project active"}</button><button onClick={() => void updateProjectStatus("completed")}>Mark complete</button><button onClick={exportEvidence}>Export evidence ledger</button></div>}
         </nav>
-        <section className="workspace-content">
+        {suiteName ? (
+          <SuiteWorkspace
+            key={`${suiteName}-${projectId}-${organizationId}`}
+            module={suiteName}
+            projectId={projectId}
+            organizationId={organizationId}
+            onBack={() => navigate("Home")}
+          />
+        ) : <section className="workspace-content">
           {notice && <div className="workspace-notice" role="status">{notice}<button aria-label="Dismiss message" onClick={() => setNotice("")}>×</button></div>}
           <div className="metric-grid" id="workspace-overview">
             <article className="metric-card progress-card">
@@ -737,12 +740,89 @@ export default function WorkspacePage() {
               </article>
             </aside>
           </div>
-        </section>
+        </section>}
       </section>
       {siteDialog && <div className="dialog-backdrop" role="presentation" onClick={() => setSiteDialog(false)}><section className="site-dialog" role="dialog" aria-modal="true" aria-labelledby="site-dialog-title" onClick={(event) => event.stopPropagation()}><button className="dialog-close" aria-label="Close site details" onClick={() => setSiteDialog(false)}>×</button><p className="section-kicker">Project site</p><h2 id="site-dialog-title">{project}</h2><p>{location} · {projectCode}</p><div><span>Coordinates</span><strong>5.6037° N, 0.1870° W</strong></div><div><span>Client</span><strong>{projectClient}</strong></div><button className="primary-button" onClick={() => setSiteDialog(false)}>Done</button></section></div>}
       {settingsOpen && <div className="dialog-backdrop" role="presentation" onClick={() => setSettingsOpen(false)}><section className="site-dialog settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-dialog-title" onClick={(event) => event.stopPropagation()}><button className="dialog-close" aria-label="Close settings" onClick={() => setSettingsOpen(false)}>×</button><p className="section-kicker">Workspace</p><h2 id="settings-dialog-title">Settings</h2><p>Organization and project details connected to this tenant.</p><div><span>Organization</span><strong>{organization}</strong></div><div><span>Project</span><strong>{project} · {projectCode}</strong></div><div><span>Project state</span><strong>{labelize(projectStatus)}</strong></div><div><span>Data access</span><strong>Tenant protected</strong></div><button className="primary-button" onClick={() => setSettingsOpen(false)}>Done</button></section></div>}
     </main>
   );
+}
+
+const suiteDefinitions: Record<string, { title: string; description: string; table: "projects" | "verifications" | "material_packages" | "deliveries" | "approval_actions" | "exceptions" | "audit_events" | "organization_memberships" | "release_recommendations"; columns: string; scope: "project" | "organization" }> = {
+  Projects: { title: "Projects", description: "Project register and delivery status for this organisation.", table: "projects", columns: "id, project_code, name, status, client_name, planned_start_date, planned_end_date", scope: "organization" },
+  Evidence: { title: "Evidence", description: "Verification records and supporting field findings for this project.", table: "verifications", columns: "id, status, unit, findings, verified_at, created_at", scope: "project" },
+  Materials: { title: "Materials", description: "Approved quantities, receipts and verification status by package.", table: "material_packages", columns: "id, package_code, name, status, approved_quantity, received_quantity, verified_quantity", scope: "project" },
+  Deliveries: { title: "Deliveries", description: "Inbound delivery records and receiving details.", table: "deliveries", columns: "id, delivery_reference, status, vehicle_reference, received_at, notes, created_at", scope: "project" },
+  Approvals: { title: "Approvals", description: "Recorded approval decisions and their rationale.", table: "approval_actions", columns: "id, decision, rationale, acted_at, created_at", scope: "project" },
+  Issues: { title: "Issues", description: "Open exceptions, ownership and due dates requiring attention.", table: "exceptions", columns: "id, title, severity, status, due_at, description, created_at", scope: "project" },
+  Reports: { title: "Reports", description: "A filterable activity ledger from the tenant audit trail.", table: "audit_events", columns: "id, occurred_at, event_type, entity_type, source", scope: "project" },
+  Team: { title: "Team", description: "Organisation members and their current access roles.", table: "organization_memberships", columns: "id, user_id, role, status, invited_at, accepted_at", scope: "organization" },
+  Inspections: { title: "Inspections", description: "Inspection and verification records awaiting or completing review.", table: "verifications", columns: "id, status, unit, findings, verified_at, created_at", scope: "project" },
+  Risks: { title: "Risks", description: "Project exceptions and risk items recorded by the team.", table: "exceptions", columns: "id, title, severity, status, due_at, description, created_at", scope: "project" },
+  Finance: { title: "Finance", description: "Release recommendations prepared for authorised financial review.", table: "release_recommendations", columns: "id, recommendation_number, status, recommended_amount, currency_code, rationale, created_at", scope: "project" },
+};
+
+function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module: string; projectId: string; organizationId: string; onBack: () => void }) {
+  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [filter, setFilter] = useState("");
+  const definition = suiteDefinitions[module];
+
+  const fetchRecords = useCallback(async () => {
+    if (!definition || !projectId || !organizationId) return { data: [] as unknown as Record<string, unknown>[], error: "" };
+    let result;
+    switch (definition.table) {
+      case "projects": result = await supabase.from("projects").select(definition.columns).eq("organization_id", organizationId).order("created_at", { ascending: false }); break;
+      case "verifications": result = await supabase.from("verifications").select(definition.columns).eq("project_id", projectId).order("created_at", { ascending: false }); break;
+      case "material_packages": result = await supabase.from("material_packages").select(definition.columns).eq("project_id", projectId).order("created_at", { ascending: false }); break;
+      case "deliveries": result = await supabase.from("deliveries").select(definition.columns).eq("project_id", projectId).order("created_at", { ascending: false }); break;
+      case "approval_actions": result = await supabase.from("approval_actions").select(definition.columns).eq("project_id", projectId).order("created_at", { ascending: false }); break;
+      case "exceptions": result = await supabase.from("exceptions").select(definition.columns).eq("project_id", projectId).order("created_at", { ascending: false }); break;
+      case "audit_events": result = await supabase.from("audit_events").select(definition.columns).eq("project_id", projectId).order("occurred_at", { ascending: false }); break;
+      case "organization_memberships": result = await supabase.from("organization_memberships").select(definition.columns).eq("organization_id", organizationId).order("created_at", { ascending: false }); break;
+      case "release_recommendations": result = await supabase.from("release_recommendations").select(definition.columns).eq("project_id", projectId).order("created_at", { ascending: false }); break;
+    }
+    return { data: (result.data ?? []) as unknown as Record<string, unknown>[], error: result.error?.message ?? "" };
+  }, [definition, organizationId, projectId]);
+  useEffect(() => {
+    let cancelled = false;
+    async function refresh() {
+      const result = await fetchRecords();
+      if (cancelled) return;
+      setRows(result.data);
+      setError(result.error);
+      setLoading(false);
+    }
+    void refresh();
+    return () => { cancelled = true; };
+  }, [fetchRecords]);
+  async function loadRecords() {
+    setLoading(true);
+    const result = await fetchRecords();
+    setRows(result.data);
+    setError(result.error);
+    setLoading(false);
+  }
+
+  if (!definition) return null;
+  const visibleRows = rows.filter((row) => JSON.stringify(row).toLowerCase().includes(filter.toLowerCase()));
+  function downloadRows() {
+    const keys = definition.columns.split(", ").filter((key) => key !== "id");
+    const escape = (value: unknown) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+    const csv = [keys.map(escape).join(","), ...visibleRows.map((row) => keys.map((key) => escape(row[key])).join(","))].join("\r\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${module.toLowerCase()}-records.csv`; anchor.click(); URL.revokeObjectURL(url);
+  }
+  return <section className="workspace-content suite-workspace">
+    <div className="suite-heading"><div><p className="section-kicker">Project suite</p><h2>{definition.title}</h2><p>{definition.description}</p></div><button className="suite-back" onClick={onBack}>← Project overview</button></div>
+    <div className="suite-toolbar"><label><span className="sr-only">Filter {definition.title.toLowerCase()}</span><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder={`Filter ${definition.title.toLowerCase()}…`} /></label><span>{visibleRows.length} records</span><button onClick={() => void loadRecords()} disabled={loading}>Refresh</button><button onClick={downloadRows} disabled={!visibleRows.length}>Export CSV</button></div>
+    {error && <p className="suite-error" role="alert">Couldn’t load these tenant records: {error}</p>}
+    <div className="suite-table-wrap"><table className="suite-table"><thead><tr>{definition.columns.split(", ").filter((key) => key !== "id").map((key) => <th key={key}>{labelize(key)}</th>)}</tr></thead><tbody>
+      {loading ? <tr><td colSpan={definition.columns.split(", ").length}>Loading {definition.title.toLowerCase()}…</td></tr> : visibleRows.length ? visibleRows.map((row) => <tr key={String(row.id)}>{definition.columns.split(", ").filter((key) => key !== "id").map((key) => <td key={key}>{row[key] == null || row[key] === "" ? "—" : String(row[key])}</td>)}</tr>) : <tr><td colSpan={definition.columns.split(", ").length}>No {definition.title.toLowerCase()} records found for this project yet.</td></tr>}
+    </tbody></table></div>
+    <p className="suite-footnote">Records are read from your signed-in tenant under its row-level access rules. Changes to controlled records are reserved for audited, role-checked actions.</p>
+  </section>;
 }
 
 function Metric({
