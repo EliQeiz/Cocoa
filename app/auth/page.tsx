@@ -4,6 +4,7 @@ import { ArrowRight, Building2, CheckCircle2, Database, KeyRound, LockKeyhole, M
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase/client";
+import { normalizeEmail, safeAuthError } from "../../lib/security/input";
 
 const callbackOrigin = process.env.NEXT_PUBLIC_APP_URL ?? "https://cocoa-elisha-afaris-projects.vercel.app";
 
@@ -27,7 +28,7 @@ export default function AuthPage() {
       acceptingInvite.current = false;
       if (error) {
         setStatus("error");
-        setMessage(error.message);
+        setMessage("This invitation is invalid, expired, or does not match the signed-in email address.");
         return;
       }
       inviteToken.current = "";
@@ -67,13 +68,14 @@ export default function AuthPage() {
     event.preventDefault();
     setStatus("sending");
     setMessage("");
+    const normalizedEmail = normalizeEmail(email);
     const { error } = await supabase.auth.signInWithOtp({
-      email,
+      email: normalizedEmail,
       options: { emailRedirectTo: `${callbackOrigin}/auth${inviteToken.current ? `?invite=${encodeURIComponent(inviteToken.current)}` : ""}`, shouldCreateUser: mode === "signup" },
     });
     if (error) {
       setStatus("error");
-      setMessage(error.message);
+      setMessage(safeAuthError(error));
       return;
     }
     setStatus("sent");
@@ -95,7 +97,7 @@ export default function AuthPage() {
     });
     if (error) {
       setStatus("error");
-      setMessage(error.message);
+      setMessage(safeAuthError(error));
     }
   }
 
@@ -127,7 +129,7 @@ export default function AuthPage() {
             <h2 id="sign-in-title">{mode === "signup" ? "Start with your work email" : "Sign in with your email"}</h2>
             <form onSubmit={submit} className="auth-form">
               <label htmlFor="email">{mode === "signup" ? "Work email" : "Email"}</label>
-              <div className="input-with-icon"><Mail size={18} /><input id="email" type="email" autoComplete="email" required placeholder="name@organisation.org" value={email} onChange={(event) => setEmail(event.target.value)} /></div>
+              <div className="input-with-icon"><Mail size={18} /><input id="email" type="email" inputMode="email" autoCapitalize="none" autoCorrect="off" autoComplete="email" maxLength={254} required placeholder="name@organisation.org" value={email} onChange={(event) => setEmail(event.target.value)} /></div>
               <button className="primary-button" disabled={status === "sending"}>{status === "sending" ? "Sending secure link…" : <>{mode === "signup" ? "Create secure account" : "Continue"} <ArrowRight size={18} /></>}</button>
               {message && <p className={`form-message ${status === "error" ? "is-error" : ""}`}>{status === "sent" && <CheckCircle2 size={16} />}{message}</p>}
             </form>

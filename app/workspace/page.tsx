@@ -27,6 +27,7 @@ import Image from "next/image";
 import { ReactNode, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase/client";
+import { normalizeEmail, normalizePlainText } from "../../lib/security/input";
 
 const navigation = [
   [Home, "Home"],
@@ -929,19 +930,19 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
     let parameters: Record<string, unknown>;
     if (module === "Materials") {
       command = "submit_material_purchase_request";
-      parameters = { p_project_id: projectId, p_request_number: form.requestNumber, p_description: form.itemDescription, p_requested_quantity: Number(form.requestQuantity), p_unit: form.requestUnit, p_needed_by_date: form.neededBy || null, p_purpose: form.requestPurpose, p_estimated_unit_rate: form.estimatedRate ? Number(form.estimatedRate) : null };
+      parameters = { p_project_id: projectId, p_request_number: normalizePlainText(form.requestNumber, 48), p_description: normalizePlainText(form.itemDescription, 500), p_requested_quantity: Number(form.requestQuantity), p_unit: normalizePlainText(form.requestUnit, 24), p_needed_by_date: form.neededBy || null, p_purpose: normalizePlainText(form.requestPurpose, 2000), p_estimated_unit_rate: form.estimatedRate ? Number(form.estimatedRate) : null };
     } else if (module === "Issues" || module === "Risks") {
       command = "create_project_exception";
-      parameters = { p_project_id: projectId, p_title: form.title, p_description: form.description, p_severity: form.severity, p_due_at: form.dueAt ? new Date(`${form.dueAt}T23:59:59Z`).toISOString() : null };
+      parameters = { p_project_id: projectId, p_title: normalizePlainText(form.title, 180), p_description: normalizePlainText(form.description, 4000), p_severity: form.severity, p_due_at: form.dueAt ? new Date(`${form.dueAt}T23:59:59Z`).toISOString() : null };
     } else if (module === "Deliveries") {
       command = "receive_project_material_delivery";
-      parameters = { p_project_id: projectId, p_material_package_id: form.packageId, p_received_quantity: Number(form.quantity), p_delivery_reference: form.deliveryReference, p_vehicle_reference: form.vehicleReference, p_manufacturer_batch_reference: form.manufacturerBatch, p_certificate_reference: form.certificateReference, p_condition_notes: form.notes };
+      parameters = { p_project_id: projectId, p_material_package_id: form.packageId, p_received_quantity: Number(form.quantity), p_delivery_reference: normalizePlainText(form.deliveryReference, 120), p_vehicle_reference: normalizePlainText(form.vehicleReference, 120), p_manufacturer_batch_reference: normalizePlainText(form.manufacturerBatch, 120), p_certificate_reference: normalizePlainText(form.certificateReference, 160), p_condition_notes: normalizePlainText(form.notes, 2000) };
     } else if (module === "Inspections") {
       command = "create_project_batch_inspection";
-      parameters = { p_project_id: projectId, p_material_package_id: form.packageId, p_material_batch_id: form.batchId, p_observed_quantity: Number(form.quantity), p_findings: form.findings, p_project_site_id: null };
+      parameters = { p_project_id: projectId, p_material_package_id: form.packageId, p_material_batch_id: form.batchId, p_observed_quantity: Number(form.quantity), p_findings: normalizePlainText(form.findings, 4000), p_project_site_id: null };
     } else if (module === "Finance") {
       command = "create_project_release_recommendation";
-      parameters = { p_project_id: projectId, p_recommendation_number: form.recommendationNumber, p_recommended_amount: form.amount ? Number(form.amount) : null, p_currency_code: form.currency, p_rationale: form.rationale };
+      parameters = { p_project_id: projectId, p_recommendation_number: normalizePlainText(form.recommendationNumber, 48), p_recommended_amount: form.amount ? Number(form.amount) : null, p_currency_code: form.currency, p_rationale: normalizePlainText(form.rationale, 4000) };
     } else {
       setSaving(false);
       return;
@@ -972,7 +973,7 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
     setInviteLink("");
     const { data, error: invitationError } = await supabase.rpc("create_organization_invitation", {
       p_organization_id: organizationId,
-      p_email: inviteEmail.trim().toLowerCase(),
+      p_email: normalizeEmail(inviteEmail),
       p_role: inviteRole,
     });
     if (invitationError || !data?.[0]?.invite_token) {
@@ -1002,7 +1003,7 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
     setForm((current) => ({ ...current, [field]: value }));
   }
   async function decideRequest(requestId: string, decision: "approved" | "queried" | "rejected" | "returned" | "variation_required") {
-    const rationale = approvalNotes[requestId]?.trim() ?? "";
+    const rationale = normalizePlainText(approvalNotes[requestId] ?? "", 4000);
     if (rationale.length < 3) {
       setError("Add a decision rationale before recording this approval action.");
       return;
@@ -1022,7 +1023,7 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
     setSavingRequest("");
   }
   async function decideInspection(verificationId: string, decision: "accepted" | "rejected") {
-    const rationale = inspectionNotes[verificationId]?.trim() ?? "";
+    const rationale = normalizePlainText(inspectionNotes[verificationId] ?? "", 4000);
     if (rationale.length < 3) {
       setError("Add a review rationale before recording the inspection decision.");
       return;
@@ -1225,11 +1226,11 @@ function EvidenceCapture({ projectId, organizationId }: { projectId: string; org
         p_project_id: projectId,
         p_delivery_id: deliveryId,
         p_object_path: objectPath,
-        p_original_filename: file.name,
+        p_original_filename: normalizePlainText(file.name, 255),
         p_mime_type: file.type,
         p_byte_size: file.size,
         p_sha256: sha256,
-        p_caption: caption.trim(),
+        p_caption: normalizePlainText(caption, 1000),
       });
       if (registerError) {
         await supabase.storage.from("buildproof-evidence").remove([objectPath]);

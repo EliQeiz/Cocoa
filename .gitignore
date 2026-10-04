@@ -2,8 +2,16 @@ node_modules/
 .next/
 out/
 .env
+.env.*
+!.env.example
 .env.local
 .env.*.local
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+secrets.json
 *.tsbuildinfo
 npm-debug.log*
 

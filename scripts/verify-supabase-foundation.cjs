@@ -102,6 +102,73 @@ async function main() {
             and not tgisinternal
         ) as present;
       `);
+    const securityHardening = await client.query(`
+        select
+          to_regclass('private.action_rate_limits') is not null as rate_limit_table,
+          exists (
+            select 1 from pg_trigger
+            where tgrelid = 'public.audit_events'::regclass
+              and tgname = 'audit_events_rate_limit' and not tgisinternal
+          ) as rate_limit_trigger,
+          exists (
+            select 1 from pg_policies
+            where schemaname = 'public' and tablename = 'organization_invitations'
+              and policyname = 'organization_invitations_read_admin'
+          ) as invitation_admin_policy,
+          exists (
+            select 1 from pg_policies
+            where schemaname = 'public' and tablename = 'organization_memberships'
+              and policyname = 'memberships_read_self_or_admin'
+          ) as membership_admin_policy;
+      `);
+    const unsafeDefinerFunctions = await client.query(`
+        select namespace.nspname, procedure.proname
+        from pg_proc procedure
+        join pg_namespace namespace on namespace.oid = procedure.pronamespace
+        where namespace.nspname in ('public', 'private')
+          and procedure.prosecdef
+          and not exists (
+            select 1 from pg_depend dependency
+            where dependency.classid = 'pg_proc'::regclass
+              and dependency.objid = procedure.oid
+              and dependency.deptype = 'e'
+          )
+          and not exists (
+            select 1 from unnest(coalesce(procedure.proconfig, array[]::text[])) setting
+            where setting like 'search_path=%'
+          );
+      `);
+    const exposedDefinerFunctions = await client.query(`
+        select distinct namespace.nspname, procedure.proname,
+          pg_get_function_identity_arguments(procedure.oid) as arguments,
+          case when privilege.grantee = 0 then 'PUBLIC' else role.rolname end as grantee
+        from pg_proc procedure
+        join pg_namespace namespace on namespace.oid = procedure.pronamespace
+        cross join lateral aclexplode(coalesce(procedure.proacl, acldefault('f', procedure.proowner))) privilege
+        left join pg_roles role on role.oid = privilege.grantee
+        where namespace.nspname in ('public', 'private')
+          and procedure.prosecdef
+          and not exists (
+            select 1 from pg_depend dependency
+            where dependency.classid = 'pg_proc'::regclass
+              and dependency.objid = procedure.oid
+              and dependency.deptype = 'e'
+          )
+          and privilege.privilege_type = 'EXECUTE'
+          and (privilege.grantee = 0 or role.rolname = 'anon');
+      `);
+    const directBrowserWrites = await client.query(`
+        select table_name, grantee, privilege_type
+        from information_schema.table_privileges
+        where table_schema = 'public'
+          and table_name in (
+            select table_name from information_schema.tables
+            where table_schema = 'public' and table_type = 'BASE TABLE'
+              and table_name <> 'spatial_ref_sys'
+          )
+          and grantee in ('anon', 'authenticated')
+          and privilege_type in ('INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER');
+      `);
 
     const summary = {
       tables: tables.rows.map((row) => row.table_name),
@@ -121,6 +188,16 @@ async function main() {
       invitationRlsEnabled: invitationCommands.rows[0].rls_enabled,
       invitationTokenDigestPrivate: invitationCommands.rows[0].token_digest_private,
       obsoleteInvitationSignupTriggerPresent: legacyInviteHook.rows[0].present,
+      domainRateLimitTableAvailable: securityHardening.rows[0].rate_limit_table,
+      domainRateLimitTriggerAvailable: securityHardening.rows[0].rate_limit_trigger,
+      invitationReadRestrictedToAdmins: securityHardening.rows[0].invitation_admin_policy,
+      membershipDirectoryRestrictedToSelfOrAdmins: securityHardening.rows[0].membership_admin_policy,
+      unsafeSecurityDefinerFunctionCount: unsafeDefinerFunctions.rowCount,
+      unsafeSecurityDefinerFunctions: unsafeDefinerFunctions.rows,
+      publiclyExposedSecurityDefinerFunctionCount: exposedDefinerFunctions.rowCount,
+      publiclyExposedSecurityDefinerFunctions: exposedDefinerFunctions.rows,
+      directBrowserWriteGrantCount: directBrowserWrites.rowCount,
+      directBrowserWriteGrants: directBrowserWrites.rows,
     };
     console.log(JSON.stringify(summary, null, 2));
 
@@ -141,6 +218,13 @@ async function main() {
       !summary.invitationRlsEnabled ||
       !summary.invitationTokenDigestPrivate ||
       summary.obsoleteInvitationSignupTriggerPresent ||
+      !summary.domainRateLimitTableAvailable ||
+      !summary.domainRateLimitTriggerAvailable ||
+      !summary.invitationReadRestrictedToAdmins ||
+      !summary.membershipDirectoryRestrictedToSelfOrAdmins ||
+      summary.unsafeSecurityDefinerFunctionCount !== 0 ||
+      summary.publiclyExposedSecurityDefinerFunctionCount !== 0 ||
+      summary.directBrowserWriteGrantCount !== 0 ||
       !summary.evidenceBucket ||
       summary.evidenceBucket.public
     ) {
