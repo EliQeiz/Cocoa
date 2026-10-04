@@ -35,6 +35,12 @@ export async function refreshSession(request: NextRequest) {
     candidate.headers.set("Content-Security-Policy", contentSecurityPolicy);
     return candidate;
   };
+  const privateResponse = (candidate: NextResponse) => {
+    candidate.headers.set("Cache-Control", "private, no-cache, no-store, must-revalidate, max-age=0");
+    candidate.headers.set("Expires", "0");
+    candidate.headers.set("Pragma", "no-cache");
+    return secure(candidate);
+  };
 
   let response = NextResponse.next({ request: { headers: requestHeaders } });
   const supabase = createServerClient(url, key, {
@@ -57,11 +63,11 @@ export async function refreshSession(request: NextRequest) {
     request.nextUrl.pathname.startsWith("/admin") || apiPath;
 
   if ((error || !userId) && protectedPath) {
-    if (apiPath) return secure(NextResponse.json({ error: "Unauthorized" }, { status: 401 }));
+    if (apiPath) return privateResponse(NextResponse.json({ error: "Unauthorized" }, { status: 401 }));
     const destination = request.nextUrl.clone();
     destination.pathname = "/auth";
     destination.search = "";
-    return secure(NextResponse.redirect(destination));
+    return privateResponse(NextResponse.redirect(destination));
   }
 
   if (userId && request.nextUrl.pathname.startsWith("/admin")) {
@@ -73,8 +79,9 @@ export async function refreshSession(request: NextRequest) {
       .in("role", ["organization_owner", "organization_admin"])
       .limit(1)
       .maybeSingle();
-    if (!membership) return secure(new NextResponse("Forbidden", { status: 403 }));
+    if (!membership) return privateResponse(new NextResponse("Forbidden", { status: 403 }));
   }
 
+  if (protectedPath) return privateResponse(response);
   return secure(response);
 }
