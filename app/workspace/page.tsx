@@ -1,15 +1,18 @@
 "use client";
 
 import {
+  ArrowUpRight,
   Bell,
   CalendarDays,
   CheckCircle2,
   ChevronDown,
   CircleAlert,
   ClipboardCheck,
+  Command,
   FileCheck2,
   FileText,
   FolderKanban,
+  HardHat,
   Home,
   MapPinned,
   Menu,
@@ -18,27 +21,44 @@ import {
   PackageCheck,
   ReceiptText,
   Satellite,
+  Search,
   Settings,
+  ShieldCheck,
   UsersRound,
   X,
 } from "lucide-react";
 import Image from "next/image";
-import { ReactNode, useCallback, useEffect, useState } from "react";
+import { FormEvent, ReactNode, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase/client";
 import { normalizeEmail, normalizePlainText } from "../../lib/security/input";
 import { BuildProofBrand } from "../_components/buildproof-brand";
 
-const navigation = [
-  [Home, "Home"],
-  [FolderKanban, "Projects"],
-  [FileCheck2, "Evidence"],
-  [PackageCheck, "Materials"],
-  [ReceiptText, "Deliveries"],
-  [ClipboardCheck, "Approvals"],
-  [CircleAlert, "Issues"],
-  [FileText, "Reports"],
-  [UsersRound, "Team"],
+const navigationGroups = [
+  {
+    label: "Overview",
+    items: [
+      [Home, "Home"],
+      [FolderKanban, "Projects"],
+    ],
+  },
+  {
+    label: "Project control",
+    items: [
+      [FileCheck2, "Evidence"],
+      [PackageCheck, "Materials"],
+      [ReceiptText, "Deliveries"],
+      [ClipboardCheck, "Approvals"],
+      [CircleAlert, "Issues"],
+    ],
+  },
+  {
+    label: "Organisation",
+    items: [
+      [FileText, "Reports"],
+      [UsersRound, "Team"],
+    ],
+  },
 ];
 
 type MaterialRow = {
@@ -145,6 +165,21 @@ export default function WorkspacePage() {
   const [materials, setMaterials] = useState<MaterialRow[]>([]);
   const [ledger, setLedger] = useState<LedgerRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [workspaceSearch, setWorkspaceSearch] = useState("");
+  const [userName, setUserName] = useState("Project lead");
+  const [userEmail, setUserEmail] = useState("");
+  const [userInitials, setUserInitials] = useState("BP");
+
+  useEffect(() => {
+    function focusWorkspaceSearch(event: KeyboardEvent) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        document.getElementById("workspace-global-search")?.focus();
+      }
+    }
+    window.addEventListener("keydown", focusWorkspaceSearch);
+    return () => window.removeEventListener("keydown", focusWorkspaceSearch);
+  }, []);
 
   useEffect(() => {
     async function loadWorkspace() {
@@ -152,6 +187,26 @@ export default function WorkspacePage() {
         data: { session },
       } = await supabase.auth.getSession();
       if (!session) return router.replace("/auth");
+
+      const email = normalizeEmail(session.user.email ?? "");
+      const metadataName = normalizePlainText(
+        String(session.user.user_metadata?.full_name ?? session.user.user_metadata?.name ?? ""),
+        64,
+      );
+      const emailName = email
+        .split("@")[0]
+        .replace(/[._-]+/g, " ")
+        .replace(/\b\w/g, (letter) => letter.toUpperCase());
+      const displayName = metadataName || emailName || "Project lead";
+      setUserName(displayName);
+      setUserEmail(email);
+      setUserInitials(
+        displayName
+          .split(/\s+/)
+          .slice(0, 2)
+          .map((part) => part[0]?.toUpperCase())
+          .join("") || "BP",
+      );
 
       const { data: organizations } = await supabase
         .from("organizations")
@@ -382,6 +437,38 @@ export default function WorkspacePage() {
       .getElementById(sectionTargets[label] ?? "workspace-overview")
       ?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
+  function handleWorkspaceSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const query = normalizePlainText(workspaceSearch, 120).toLowerCase();
+    if (!query) {
+      document.getElementById("workspace-global-search")?.focus();
+      return;
+    }
+    const destinations: Array<[string[], string]> = [
+      [["evidence", "photo", "document", "proof"], "Evidence"],
+      [["material", "cement", "rebar", "batch"], "Materials"],
+      [["delivery", "vehicle", "receipt"], "Deliveries"],
+      [["inspection", "verification"], "Inspections"],
+      [["approval", "decision"], "Approvals"],
+      [["issue", "exception"], "Issues"],
+      [["risk"], "Risks"],
+      [["finance", "release", "payment"], "Finance"],
+      [["report", "audit", "activity"], "Reports"],
+      [["team", "member", "role"], "Team"],
+      [["project", "site"], "Projects"],
+    ];
+    const destination = destinations.find(([terms]) =>
+      terms.some((term) => query.includes(term)),
+    )?.[1];
+    if (destination) {
+      navigate(destination);
+      setWorkspaceSearch("");
+      return;
+    }
+    setNotice(
+      `No workspace section matched “${normalizePlainText(workspaceSearch, 120)}”. Try evidence, materials, deliveries, approvals, risks or reports.`,
+    );
+  }
   async function updateProjectStatus(nextStatus: "planning" | "active" | "on_hold" | "completed") {
     if (!projectId) return;
     const { error } = await supabase.rpc("update_project_status", { p_project_id: projectId, p_next_status: nextStatus });
@@ -445,23 +532,39 @@ export default function WorkspacePage() {
           <BuildProofBrand compact inverse />
           <button className="rail-toggle" type="button" title={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"} aria-label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"} aria-expanded={!sidebarCollapsed} onClick={() => setSidebarCollapsed((value) => !value)}><Menu size={19} /></button>
         </div>
-        <nav>
-          {navigation.map(([Icon, label]) => (
-            <button
-              key={label as string}
-              aria-current={activeSection === label ? "page" : undefined}
-              onClick={() => navigate(label as string)}
-              className={activeSection === label ? "nav-active" : ""}
-            >
-              <Icon size={19} />
-              <span>{label as string}</span>
-            </button>
+        <button className="sidebar-search" type="button" onClick={() => document.getElementById("workspace-global-search")?.focus()}>
+          <Search size={17} />
+          <span>Search workspace</span>
+          <kbd>Ctrl K</kbd>
+        </button>
+        <nav aria-label="Workspace navigation">
+          {navigationGroups.map((group) => (
+            <div className="nav-group" key={group.label}>
+              <p>{group.label}</p>
+              {group.items.map(([Icon, label]) => (
+                <button
+                  key={label as string}
+                  aria-current={activeSection === label ? "page" : undefined}
+                  onClick={() => navigate(label as string)}
+                  className={activeSection === label ? "nav-active" : ""}
+                >
+                  <Icon size={18} />
+                  <span>{label as string}</span>
+                  <ChevronDown className="nav-chevron" size={14} />
+                </button>
+              ))}
+            </div>
           ))}
         </nav>
         <button className={`sidebar-settings ${activeSection === "Settings" ? "nav-active" : ""}`} onClick={() => { setSuiteName(null); setActiveSection("Settings"); setSettingsOpen(true); }}>
           <Settings size={19} />
           <span>Settings</span>
         </button>
+        <div className="sidebar-workspace-card">
+          <span>{userInitials}</span>
+          <p><small>Current workspace</small><strong>{organization}</strong></p>
+          <ShieldCheck size={17} />
+        </div>
       </aside>
       {sidebarOpen && <button className="sidebar-backdrop" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} />}
       <section className="workspace-main">
@@ -470,6 +573,7 @@ export default function WorkspacePage() {
             {sidebarOpen ? <X size={21} /> : <Menu size={21} />}
           </button>
           <div>
+            <span className="header-context">Project command centre</span>
             <h1>
               <button className="project-title-button" onClick={() => setOpenMenu(openMenu === "project" ? null : "project")}>
                 {project} <strong>{labelize(projectStatus)}</strong> <ChevronDown size={17} />
@@ -480,6 +584,17 @@ export default function WorkspacePage() {
               <span>•</span> <UsersRound size={13} /> {projectClient}
             </p>
           </div>
+          <form className="workspace-global-search" onSubmit={handleWorkspaceSearch} role="search">
+            <Search size={18} aria-hidden="true" />
+            <input
+              id="workspace-global-search"
+              value={workspaceSearch}
+              onChange={(event) => setWorkspaceSearch(event.target.value)}
+              placeholder="Search evidence, materials, deliveries…"
+              aria-label="Search workspace"
+            />
+            <kbd><Command size={12} /> K</kbd>
+          </form>
           <div className="workspace-timeframe">
             <span>
               <CalendarDays size={15} /> {projectRange}
@@ -491,13 +606,13 @@ export default function WorkspacePage() {
           </div>
           <div className="header-actions">
             <button className="icon-action" aria-label="Notifications" onClick={() => setOpenMenu(openMenu === "notifications" ? null : "notifications")}><Bell size={19} /></button>
-            <span className="avatar">JL</span>
+            <span className="avatar">{userInitials}</span>
             <button className="user-name account-action" onClick={() => setOpenMenu(openMenu === "account" ? null : "account")}>
-              Jordan Lee<small>Project Manager</small>
+              {userName}<small>{userEmail || "Project workspace"}</small>
               <ChevronDown size={15} />
             </button>
             {openMenu === "notifications" && <div className="header-popover"><strong>Notifications</strong><p>{ledger.length ? `${ledger.length} recent project updates are available.` : "You’re all caught up."}</p><button onClick={() => navigate("Evidence")}>Review project activity</button></div>}
-            {openMenu === "account" && <div className="header-popover account-popover"><strong>Jordan Lee</strong><button onClick={() => { setSuiteName(null); setActiveSection("Settings"); setSettingsOpen(true); setOpenMenu(null); }}>Workspace settings</button><button onClick={() => void signOut()}>Sign out</button></div>}
+            {openMenu === "account" && <div className="header-popover account-popover"><strong>{userName}</strong><p>{userEmail}</p><button onClick={() => { setSuiteName(null); setActiveSection("Settings"); setSettingsOpen(true); setOpenMenu(null); }}>Workspace settings</button><button onClick={() => void signOut()}>Sign out</button></div>}
           </div>
         </header>
         <nav className="project-tabs">
@@ -525,6 +640,27 @@ export default function WorkspacePage() {
           />
         ) : <section className="workspace-content">
           {notice && <div className="workspace-notice" role="status">{notice}<button aria-label="Dismiss message" onClick={() => setNotice("")}>×</button></div>}
+          <section className="workspace-hero" aria-labelledby="workspace-hero-title">
+            <div className="workspace-hero-copy">
+              <span className="hero-kicker"><HardHat size={16} /> Live project control</span>
+              <h2 id="workspace-hero-title">Control today’s site decisions.</h2>
+              <p>{project} has {stats.activeRisks} active {stats.activeRisks === 1 ? "risk" : "risks"}, {stats.evidenceReview} evidence records in review and {stats.approvalsPending} approvals awaiting action.</p>
+            </div>
+            <div className="hero-status">
+              <span><i /> {loading ? "Synchronising tenant data" : "Workspace data is current"}</span>
+              <strong>{stats.progress}%</strong><small>programme complete</small>
+            </div>
+            <div className="hero-actions" aria-label="Common workspace actions">
+              <button onClick={() => navigate("Evidence")}><FileCheck2 size={18} /><span><small>Field records</small>Capture evidence</span><ArrowUpRight size={15} /></button>
+              <button onClick={() => navigate("Deliveries")}><ReceiptText size={18} /><span><small>Site logistics</small>Record delivery</span><ArrowUpRight size={15} /></button>
+              <button onClick={() => navigate("Approvals")}><ClipboardCheck size={18} /><span><small>Decision queue</small>Review approvals</span><ArrowUpRight size={15} /></button>
+              <button onClick={() => navigate("Issues")}><CircleAlert size={18} /><span><small>Attention required</small>Open issues</span><ArrowUpRight size={15} /></button>
+            </div>
+          </section>
+          <div className="workspace-section-heading">
+            <div><span>Project overview</span><h2>Performance at a glance</h2></div>
+            <p><i /> Live tenant data <small>Updated from your secured workspace</small></p>
+          </div>
           <div className="metric-grid" id="workspace-overview">
             <article className="metric-card progress-card">
               <h2>Project progress</h2>
@@ -550,6 +686,8 @@ export default function WorkspacePage() {
             </article>
             <Metric
               title="Evidence"
+              icon={<FileCheck2 />}
+              accent="blue"
               values={[
                 String(stats.evidenceAccepted),
                 String(stats.evidenceReview),
@@ -559,6 +697,8 @@ export default function WorkspacePage() {
             />
             <Metric
               title="Materials"
+              icon={<PackageCheck />}
+              accent="orange"
               values={[
                 String(stats.materialsAccepted),
                 String(stats.materialsPending),
@@ -568,6 +708,8 @@ export default function WorkspacePage() {
             />
             <Metric
               title="Approvals"
+              icon={<ClipboardCheck />}
+              accent="red"
               values={[
                 String(stats.approvalsPending),
                 String(stats.approvalsRejected),
@@ -691,7 +833,7 @@ export default function WorkspacePage() {
                       {row.type}
                     </span>
                     <strong>{row.description}</strong>
-                    <span>Jordan Lee</span>
+                    <span>{userName}</span>
                     <em className={row.style}>{row.status}</em>
                   </div>
                 ))
@@ -1265,16 +1407,23 @@ function EvidenceCapture({ projectId, organizationId }: { projectId: string; org
 
 function Metric({
   title,
+  icon,
+  accent,
   values,
   labels,
 }: {
   title: string;
+  icon: ReactNode;
+  accent: "blue" | "orange" | "red";
   values: string[];
   labels: string[];
 }) {
   return (
-    <article className="metric-card">
-      <h2>{title}</h2>
+    <article className={`metric-card metric-card-${accent}`}>
+      <div className="metric-card-heading">
+        <span>{icon}</span>
+        <p><small>Project control</small><strong>{title}</strong></p>
+      </div>
       <div className="metric-values">
         {values.map((value, index) => (
           <div key={`${title}-${labels[index]}`}>
