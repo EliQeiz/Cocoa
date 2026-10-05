@@ -1,11 +1,12 @@
 "use client";
 
-import { ArrowRight, Building2, Check, ChevronDown, ClipboardList, FileCog, FolderPlus, Home, Landmark, LockKeyhole, LogOut, PackageCheck, ShieldCheck, UsersRound, X } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, ClipboardList, FileCog, FolderPlus, Home, Landmark, LockKeyhole, LogOut, PackageCheck, ShieldCheck, UsersRound, X } from "lucide-react";
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { supabase } from "../../lib/supabase/client";
 import { normalizeEmail, normalizePlainText } from "../../lib/security/input";
+import { BuildProofBrand } from "../_components/buildproof-brand";
 
 type Draft = { organization: string; organizationType: string; country: string; projectName: string; projectCode: string; invites: string[]; roles: string[]; policies: string[]; step: number };
 const setupSteps = ["Organisation", "Team", "Roles", "Policy", "First project", "Review"];
@@ -105,7 +106,7 @@ export default function OnboardingPage() {
   const progress = Math.round(((draft.step - 1) / 5) * 100);
   const team = [ownerName, ...draft.invites];
   return <main className="onboarding-page"><section className="onboarding-shell">
-    <aside className="onboarding-sidebar"><div className="onboarding-brand"><Building2 size={27} /><span>BuildProof<small>by AuraFlow</small></span></div><nav aria-label="Workspace setup navigation">{navigation.map(([Icon, label, targetStep]) => <button type="button" className={draft.step === targetStep ? "nav-active" : ""} onClick={() => moveTo(targetStep)} key={label}><Icon size={18} /><span>{label}</span></button>)}</nav><div className="onboarding-side-copy"><i /><strong>Safer sites</strong><strong>Traceable materials</strong><strong>Stronger communities</strong></div></aside>
+    <aside className="onboarding-sidebar"><BuildProofBrand className="onboarding-brand" inverse /><nav aria-label="Workspace setup navigation">{navigation.map(([Icon, label, targetStep]) => <button type="button" className={draft.step === targetStep ? "nav-active" : ""} onClick={() => moveTo(targetStep)} key={label}><Icon size={18} /><span>{label}</span></button>)}</nav><div className="onboarding-side-copy"><i /><strong>Safer sites</strong><strong>Traceable materials</strong><strong>Stronger communities</strong></div></aside>
     <section className="onboarding-main"><header className="onboarding-topbar"><span><LockKeyhole size={16} /> Secure tenant space</span><button type="button" onClick={() => void saveAndExit()}><LogOut size={16} /> Save and exit</button></header><div className="onboarding-body">
       <section className="onboarding-form-column"><h1>Set up your organisation</h1><p className="lead">Create a secure space for your team and projects.</p><div className="onboarding-progress" aria-label="Setup progress">{setupSteps.map((label, index) => <button type="button" onClick={() => moveTo(index + 1)} className={draft.step === index + 1 ? "active" : draft.step > index + 1 ? "complete" : ""} key={label}><b>{draft.step > index + 1 ? <Check size={13} /> : index + 1}</b><span>{label}</span></button>)}</div>
         <form onSubmit={submit} className="setup-form">

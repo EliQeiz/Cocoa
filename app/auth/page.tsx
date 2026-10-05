@@ -1,10 +1,11 @@
 "use client";
 
-import { ArrowRight, Building2, CheckCircle2, Database, KeyRound, LockKeyhole, Mail, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowRight, CheckCircle2, Database, KeyRound, LockKeyhole, Mail, ShieldCheck, Sparkles } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase/client";
 import { normalizeEmail, safeAuthError } from "../../lib/security/input";
+import { BuildProofBrand } from "../_components/buildproof-brand";
 
 const callbackOrigin = process.env.NEXT_PUBLIC_APP_URL ?? "https://cocoa-elisha-afaris-projects.vercel.app";
 
@@ -105,7 +106,7 @@ export default function AuthPage() {
     <main className="auth-scene">
       <section className="auth-frame">
         <aside className="auth-story">
-          <div className="brand"><Building2 size={25} strokeWidth={1.8} /><span>BuildProof</span><small>by AuraFlow</small></div>
+          <BuildProofBrand inverse />
           <div className="auth-story-copy">
             <span className="accent-rule" />
             <h1>Evidence builds what’s next.</h1>
@@ -121,7 +122,7 @@ export default function AuthPage() {
 
         <section className="auth-panel" aria-labelledby="sign-in-title">
           <div className="auth-panel-header">
-            <div className="brand auth-panel-brand"><Building2 size={25} strokeWidth={1.8} /><span>BuildProof</span><small>by AuraFlow</small></div>
+            <BuildProofBrand className="auth-panel-brand" />
             <div className="tenant-note"><span>Secure tenant space</span><LockKeyhole size={16} /></div>
           </div>
           <div className="auth-form-wrap">

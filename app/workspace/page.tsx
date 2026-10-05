@@ -2,7 +2,6 @@
 
 import {
   Bell,
-  Building2,
   CalendarDays,
   CheckCircle2,
   ChevronDown,
@@ -28,6 +27,7 @@ import { ReactNode, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase/client";
 import { normalizeEmail, normalizePlainText } from "../../lib/security/input";
+import { BuildProofBrand } from "../_components/buildproof-brand";
 
 const navigation = [
   [Home, "Home"],
@@ -442,8 +442,7 @@ export default function WorkspacePage() {
     <main className={`workspace-page ${sidebarCollapsed ? "is-collapsed" : ""}`}>
       <aside className={`workspace-sidebar ${sidebarOpen ? "is-open" : ""}`}>
         <div className="workspace-logo">
-          <Building2 size={24} />
-          <span>BuildProof</span>
+          <BuildProofBrand compact inverse />
           <button className="rail-toggle" type="button" title={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"} aria-label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"} aria-expanded={!sidebarCollapsed} onClick={() => setSidebarCollapsed((value) => !value)}><Menu size={19} /></button>
         </div>
         <nav>
