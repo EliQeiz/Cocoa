@@ -2,9 +2,9 @@
 
 BuildProof is AuraFlow's evidence-first construction material-control platform for Ghana. It creates a traceable chain from an approved Bill of Quantities (BoQ), through request, receiving, technical verification, exceptions, and a human payment-release recommendation.
 
-## Current reset state
+## Current product state
 
-The CocoaTrace application has been removed while preserving this repository's Git history and the existing Supabase environment configuration. The BuildProof implementation starts from the architecture and database foundation in this repository.
+BuildProof now includes production authentication, tenant onboarding, a responsive project command centre and audited construction-control suites for procurement, deliveries, evidence, inspections, approvals, RFIs, submittals, daily logs, change orders, risks and release recommendations.
 
 ## Product and architecture decisions
 
@@ -15,6 +15,6 @@ The CocoaTrace application has been removed while preserving this repository's G
 
 See [the platform blueprint](docs/architecture/BUILDPROOF_PLATFORM_BLUEPRINT.md) and [the initial Supabase migration](supabase/migrations/202609280001_buildproof_foundation.sql).
 
-## Safety rule
+## Release safety
 
-The initial migration is deliberately not applied automatically. It must be reviewed, committed, and applied through a controlled Supabase migration workflow after the product owners approve the data model.
+Migrations are forward-only and must be validated in staging before production. Run `npm run verify:release` for the application gate, then the database verification and QA scripts listed in [the enterprise readiness checklist](docs/ENTERPRISE_READINESS.md). Operational procedures and dashboard control evidence live in [the operations runbooks](docs/operations/PROVIDER_CONTROLS.md).

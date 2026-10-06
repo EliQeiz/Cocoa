@@ -13,6 +13,11 @@
 - Realtime project refresh with a visible degraded/offline state.
 - Meaningful loading, not-found and recoverable route-error states.
 - CSP, HSTS, anti-framing, MIME protection, private caching and protected server layouts.
+- Public dependency-aware health endpoint with bounded upstream timeout and CDN shielding.
+- Structured server error events without request headers, query strings or tenant payloads.
+- Locked CI release gate, CodeQL security analysis and Dependabot update policy.
+- Production smoke and bounded staging load checks.
+- Incident response, deployment, backup/restore and provider-control runbooks.
 
 ## Platform controls required before a public enterprise launch
 
@@ -33,13 +38,20 @@ Every production release must pass:
 
 ```text
 npm run lint
-npx tsc --noEmit
+npm run typecheck
 npm run build
+npm run verify:env
 npm run security:audit
 npm run db:verify
 npm run db:qa:security
 npm run db:qa:invitations
 npm run db:qa:workflows
 ```
+
+After deployment, run `SMOKE_BASE_URL=https://your-production-domain npm run smoke`. Run `npm run load:smoke` only against staging unless the hosting and database providers have approved a production test window.
+
+With a short-lived Supabase Management API token scoped to `auth_config_read` and `backups_read`, run `npm run platform:verify` to verify CAPTCHA, SMTP, email confirmation, OTP expiry, refresh-token rotation, OAuth providers and backup freshness without printing provider secrets. Set `REQUIRE_PITR=true` when the approved recovery objective requires PITR.
+
+Operational procedures live under `docs/operations/`. Dashboard-only controls and their required evidence are tracked in `docs/operations/PROVIDER_CONTROLS.md`.
 
 Database migrations must be applied in a staging environment first and rolled forward; production schema changes must not be developed interactively in the dashboard.

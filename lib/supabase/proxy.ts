@@ -10,6 +10,8 @@ export async function refreshSession(request: NextRequest) {
   }
 
   const nonce = btoa(crypto.randomUUID());
+  const supabaseOrigin = new URL(url).origin;
+  const supabaseRealtimeOrigin = supabaseOrigin.replace(/^https:/, "wss:");
   const isDevelopment = process.env.NODE_ENV === "development";
   const contentSecurityPolicy = [
     "default-src 'self'",
@@ -22,8 +24,9 @@ export async function refreshSession(request: NextRequest) {
     "style-src-attr 'unsafe-inline'",
     "img-src 'self' data: blob:",
     "font-src 'self' data:",
-    "connect-src 'self' https://zghysuwvfdncnnyvesas.supabase.co wss://zghysuwvfdncnnyvesas.supabase.co",
+    `connect-src 'self' ${supabaseOrigin} ${supabaseRealtimeOrigin}`,
     "media-src 'self' blob:",
+    "manifest-src 'self'",
     "worker-src 'self' blob:",
     ...(isDevelopment ? [] : ["upgrade-insecure-requests"]),
   ].join("; ");
@@ -58,9 +61,10 @@ export async function refreshSession(request: NextRequest) {
   const { data, error } = await supabase.auth.getClaims();
   const userId = typeof data?.claims?.sub === "string" ? data.claims.sub : null;
   const apiPath = request.nextUrl.pathname.startsWith("/api");
+  const publicApiPath = request.nextUrl.pathname === "/api/health";
   const protectedPath = request.nextUrl.pathname.startsWith("/workspace") ||
     request.nextUrl.pathname.startsWith("/onboarding") ||
-    request.nextUrl.pathname.startsWith("/admin") || apiPath;
+    request.nextUrl.pathname.startsWith("/admin") || (apiPath && !publicApiPath);
 
   if ((error || !userId) && protectedPath) {
     if (apiPath) return privateResponse(NextResponse.json({ error: "Unauthorized" }, { status: 401 }));

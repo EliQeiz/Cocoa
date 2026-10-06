@@ -7,7 +7,7 @@ import { supabase } from "../../lib/supabase/client";
 import { normalizeEmail, safeAuthError } from "../../lib/security/input";
 import { BuildProofBrand } from "../_components/buildproof-brand";
 
-const callbackOrigin = process.env.NEXT_PUBLIC_APP_URL ?? "https://cocoa-elisha-afaris-projects.vercel.app";
+const configuredCallbackOrigin = process.env.NEXT_PUBLIC_APP_URL;
 
 export default function AuthPage() {
   const router = useRouter();
@@ -72,7 +72,7 @@ export default function AuthPage() {
     const normalizedEmail = normalizeEmail(email);
     const { error } = await supabase.auth.signInWithOtp({
       email: normalizedEmail,
-      options: { emailRedirectTo: `${callbackOrigin}/auth${inviteToken.current ? `?invite=${encodeURIComponent(inviteToken.current)}` : ""}`, shouldCreateUser: mode === "signup" },
+      options: { emailRedirectTo: `${configuredCallbackOrigin ?? window.location.origin}/auth${inviteToken.current ? `?invite=${encodeURIComponent(inviteToken.current)}` : ""}`, shouldCreateUser: mode === "signup" },
     });
     if (error) {
       setStatus("error");
@@ -94,7 +94,7 @@ export default function AuthPage() {
     setMessage("");
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: `${callbackOrigin}/auth${inviteToken.current ? `?invite=${encodeURIComponent(inviteToken.current)}` : ""}` },
+      options: { redirectTo: `${configuredCallbackOrigin ?? window.location.origin}/auth${inviteToken.current ? `?invite=${encodeURIComponent(inviteToken.current)}` : ""}` },
     });
     if (error) {
       setStatus("error");

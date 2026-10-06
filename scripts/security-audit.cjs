@@ -67,10 +67,11 @@ for (const file of candidates) {
 }
 
 const localKeys = environmentKeys(".env.local");
+const configuredKeys = new Set([...localKeys, ...Object.keys(process.env)]);
 const requiredAlternatives = ["NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY"];
-if (!localKeys.includes("NEXT_PUBLIC_SUPABASE_URL")) findings.push(".env.local: NEXT_PUBLIC_SUPABASE_URL is missing");
-if (!requiredAlternatives.some((name) => localKeys.includes(name))) findings.push(".env.local: a Supabase publishable key is missing");
-for (const name of localKeys) {
+if (!configuredKeys.has("NEXT_PUBLIC_SUPABASE_URL")) findings.push("environment: NEXT_PUBLIC_SUPABASE_URL is missing");
+if (!requiredAlternatives.some((name) => configuredKeys.has(name))) findings.push("environment: a Supabase publishable key is missing");
+for (const name of configuredKeys) {
   if (name.startsWith("NEXT_PUBLIC_") && /(SECRET|SERVICE_ROLE|PASSWORD|DB_URL|ACCESS_TOKEN)/i.test(name)) {
     findings.push(`.env.local: ${name} must never be exposed to browser code`);
   }

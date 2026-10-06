@@ -140,6 +140,14 @@ async function main() {
               and relation.relrowsecurity
           ) as workflow_rls;
       `);
+    const operationalHardening = await client.query(`
+        select
+          position('rfi_created' in pg_get_functiondef('private.rate_limit_audit_command()'::regprocedure)) > 0
+            and position('submittal_created' in pg_get_functiondef('private.rate_limit_audit_command()'::regprocedure)) > 0
+            and position('daily_log_created' in pg_get_functiondef('private.rate_limit_audit_command()'::regprocedure)) > 0
+            and position('change_order_created' in pg_get_functiondef('private.rate_limit_audit_command()'::regprocedure)) > 0
+            as workflow_rate_limits;
+      `);
     const unsafeDefinerFunctions = await client.query(`
         select namespace.nspname, procedure.proname
         from pg_proc procedure
@@ -214,6 +222,7 @@ async function main() {
       constructionWorkflowTablesAvailable: constructionWorkflows.rows[0].rfis_table && constructionWorkflows.rows[0].submittals_table && constructionWorkflows.rows[0].daily_logs_table && constructionWorkflows.rows[0].change_orders_table,
       constructionWorkflowCommandsAvailable: constructionWorkflows.rows[0].rfi_command && constructionWorkflows.rows[0].submittal_command && constructionWorkflows.rows[0].daily_log_command && constructionWorkflows.rows[0].change_order_command,
       constructionWorkflowRlsEnabled: constructionWorkflows.rows[0].workflow_rls,
+      constructionWorkflowRateLimitsAvailable: operationalHardening.rows[0].workflow_rate_limits,
       unsafeSecurityDefinerFunctionCount: unsafeDefinerFunctions.rowCount,
       unsafeSecurityDefinerFunctions: unsafeDefinerFunctions.rows,
       publiclyExposedSecurityDefinerFunctionCount: exposedDefinerFunctions.rowCount,
@@ -247,6 +256,7 @@ async function main() {
       !summary.constructionWorkflowTablesAvailable ||
       !summary.constructionWorkflowCommandsAvailable ||
       !summary.constructionWorkflowRlsEnabled ||
+      !summary.constructionWorkflowRateLimitsAvailable ||
       summary.unsafeSecurityDefinerFunctionCount !== 0 ||
       summary.publiclyExposedSecurityDefinerFunctionCount !== 0 ||
       summary.directBrowserWriteGrantCount !== 0 ||
