@@ -12,18 +12,22 @@ import {
   FileCheck2,
   FileText,
   FolderKanban,
+  GitPullRequestArrow,
   HardHat,
   Home,
   MapPinned,
   Menu,
   MoreHorizontal,
   Mountain,
+  NotebookPen,
   PackageCheck,
   ReceiptText,
   Satellite,
   Search,
+  Send,
   Settings,
   ShieldCheck,
+  TextQuote,
   UsersRound,
   X,
 } from "lucide-react";
@@ -48,8 +52,12 @@ const navigationGroups = [
       [FileCheck2, "Evidence"],
       [PackageCheck, "Materials"],
       [ReceiptText, "Deliveries"],
+      [TextQuote, "RFIs"],
+      [Send, "Submittals"],
+      [NotebookPen, "Daily logs"],
       [ClipboardCheck, "Approvals"],
       [CircleAlert, "Issues"],
+      [GitPullRequestArrow, "Change orders"],
     ],
   },
   {
@@ -103,6 +111,15 @@ type DashboardStats = {
   evidenceRate: string;
   siteActivity: string;
   releaseStatus: string;
+};
+type ProjectOption = {
+  id: string;
+  name: string;
+  project_code: string;
+  status: string;
+  client_name: string | null;
+  planned_start_date: string | null;
+  planned_end_date: string | null;
 };
 
 const emptyStats: DashboardStats = {
@@ -169,6 +186,11 @@ export default function WorkspacePage() {
   const [userName, setUserName] = useState("Project lead");
   const [userEmail, setUserEmail] = useState("");
   const [userInitials, setUserInitials] = useState("BP");
+  const [membershipRole, setMembershipRole] = useState("funder_viewer");
+  const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [workspaceRevision, setWorkspaceRevision] = useState(0);
+  const [realtimeStatus, setRealtimeStatus] = useState<"connecting" | "live" | "offline">("connecting");
 
   useEffect(() => {
     function focusWorkspaceSearch(event: KeyboardEvent) {
@@ -217,6 +239,15 @@ export default function WorkspacePage() {
       setOrganizationId(organizationRow.id);
       setOrganization(organizationRow.display_name);
 
+      const { data: membership } = await supabase
+        .from("organization_memberships")
+        .select("role")
+        .eq("organization_id", organizationRow.id)
+        .eq("user_id", session.user.id)
+        .eq("status", "active")
+        .maybeSingle();
+      setMembershipRole(membership?.role ?? "funder_viewer");
+
       const { data: projects } = await supabase
         .from("projects")
         .select(
@@ -224,9 +255,14 @@ export default function WorkspacePage() {
         )
         .eq("organization_id", organizationRow.id)
         .order("created_at", { ascending: true })
-        .limit(1);
-      const projectRow = projects?.[0];
+        .limit(100);
+      const availableProjects = (projects ?? []) as ProjectOption[];
+      setProjectOptions(availableProjects);
+      const projectRow =
+        availableProjects.find((candidate) => candidate.id === selectedProjectId) ??
+        availableProjects[0];
       if (!projectRow) return router.replace("/onboarding");
+      if (projectRow.id !== selectedProjectId) setSelectedProjectId(projectRow.id);
       setProjectId(projectRow.id);
       setProject(projectRow.name);
       setProjectCode(projectRow.project_code);
@@ -414,7 +450,47 @@ export default function WorkspacePage() {
       setLoading(false);
     }
     void loadWorkspace();
-  }, [router]);
+  }, [router, selectedProjectId, workspaceRevision]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    let refreshTimer: number | undefined;
+    const channel = supabase.channel(`project-control-${projectId}`);
+    const refresh = () => {
+      window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(
+        () => setWorkspaceRevision((revision) => revision + 1),
+        350,
+      );
+    };
+    for (const table of [
+      "audit_events",
+      "verifications",
+      "material_packages",
+      "approval_actions",
+      "exceptions",
+      "release_recommendations",
+      "project_rfis",
+      "project_submittals",
+      "project_daily_logs",
+      "project_change_orders",
+    ]) {
+      channel.on(
+        "postgres_changes",
+        { event: "*", schema: "public", table, filter: `project_id=eq.${projectId}` },
+        refresh,
+      );
+    }
+    channel.subscribe((status) => {
+      if (status === "SUBSCRIBED") setRealtimeStatus("live");
+      else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") setRealtimeStatus("offline");
+      else setRealtimeStatus("connecting");
+    });
+    return () => {
+      window.clearTimeout(refreshTimer);
+      void supabase.removeChannel(channel);
+    };
+  }, [projectId]);
 
   const overallState =
     projectStatus === "active"
@@ -520,10 +596,14 @@ export default function WorkspacePage() {
     "Evidence",
     "Materials",
     "Deliveries",
+    "RFIs",
+    "Submittals",
+    "Daily logs",
     "Inspections",
     "Approvals",
     "Risks",
     "Finance",
+    "Change orders",
   ];
   return (
     <main className={`workspace-page ${sidebarCollapsed ? "is-collapsed" : ""}`}>
@@ -628,7 +708,16 @@ export default function WorkspacePage() {
           <button className="project-actions" onClick={() => setOpenMenu(openMenu === "project" ? null : "project")}>
             Project actions <ChevronDown size={14} />
           </button>
-          {openMenu === "project" && <div className="project-action-menu"><strong>Project actions</strong><button onClick={() => void updateProjectStatus(projectStatus === "active" ? "on_hold" : "active")}>{projectStatus === "active" ? "Place on hold" : "Mark project active"}</button><button onClick={() => void updateProjectStatus("completed")}>Mark complete</button><button onClick={exportEvidence}>Export evidence ledger</button></div>}
+          {openMenu === "project" && <div className="project-action-menu">
+            <strong>Switch project</strong>
+            <div className="project-switcher-list">
+              {projectOptions.map((option) => <button className={option.id === projectId ? "is-current" : ""} key={option.id} onClick={() => { setSelectedProjectId(option.id); setSuiteName(null); setActiveSection("Home"); setOpenMenu(null); }}><span>{option.name}<small>{option.project_code} · {labelize(option.status)}</small></span>{option.id === projectId && <CheckCircle2 size={15} />}</button>)}
+            </div>
+            <strong>Project actions</strong>
+            <button onClick={() => void updateProjectStatus(projectStatus === "active" ? "on_hold" : "active")}>{projectStatus === "active" ? "Place on hold" : "Mark project active"}</button>
+            <button onClick={() => void updateProjectStatus("completed")}>Mark complete</button>
+            <button onClick={exportEvidence}>Export evidence ledger</button>
+          </div>}
         </nav>
         {suiteName ? (
           <SuiteWorkspace
@@ -636,6 +725,7 @@ export default function WorkspacePage() {
             module={suiteName}
             projectId={projectId}
             organizationId={organizationId}
+            membershipRole={membershipRole}
             onBack={() => navigate("Home")}
           />
         ) : <section className="workspace-content">
@@ -647,7 +737,7 @@ export default function WorkspacePage() {
               <p>{project} has {stats.activeRisks} active {stats.activeRisks === 1 ? "risk" : "risks"}, {stats.evidenceReview} evidence records in review and {stats.approvalsPending} approvals awaiting action.</p>
             </div>
             <div className="hero-status">
-              <span><i /> {loading ? "Synchronising tenant data" : "Workspace data is current"}</span>
+              <span><i className={realtimeStatus === "offline" ? "is-offline" : ""} /> {loading ? "Synchronising tenant data" : realtimeStatus === "live" ? "Live project connection" : realtimeStatus === "offline" ? "Working from last sync" : "Connecting live updates"}</span>
               <strong>{stats.progress}%</strong><small>programme complete</small>
             </div>
             <div className="hero-actions" aria-label="Common workspace actions">
@@ -900,11 +990,14 @@ export default function WorkspacePage() {
   );
 }
 
-const suiteDefinitions: Record<string, { title: string; description: string; table: "projects" | "verifications" | "material_packages" | "deliveries" | "approval_actions" | "exceptions" | "audit_events" | "organization_memberships" | "release_recommendations"; columns: string; scope: "project" | "organization" }> = {
+const suiteDefinitions: Record<string, { title: string; description: string; table: "projects" | "verifications" | "material_packages" | "deliveries" | "approval_actions" | "exceptions" | "audit_events" | "organization_memberships" | "release_recommendations" | "project_rfis" | "project_submittals" | "project_daily_logs" | "project_change_orders"; columns: string; scope: "project" | "organization" }> = {
   Projects: { title: "Projects", description: "Project register and delivery status for this organisation.", table: "projects", columns: "id, project_code, name, status, client_name, planned_start_date, planned_end_date", scope: "organization" },
   Evidence: { title: "Evidence", description: "Capture and review field proof attached to project deliveries.", table: "verifications", columns: "id, status, unit, findings, verified_at, created_at", scope: "project" },
   Materials: { title: "Materials", description: "Approved quantities, receipts and verification status by package.", table: "material_packages", columns: "id, package_code, name, status, approved_quantity, received_quantity, verified_quantity", scope: "project" },
   Deliveries: { title: "Deliveries", description: "Inbound delivery records and receiving details.", table: "deliveries", columns: "id, delivery_reference, status, vehicle_reference, received_at, notes, created_at", scope: "project" },
+  RFIs: { title: "Requests for information", description: "Formal clarification requests, responsibility and due dates.", table: "project_rfis", columns: "id, rfi_number, subject, priority, status, due_at, answered_at, created_at", scope: "project" },
+  Submittals: { title: "Submittals", description: "Specifications, samples and technical submissions moving through review.", table: "project_submittals", columns: "id, submittal_number, title, specification_section, status, due_at, reviewed_at, created_at", scope: "project" },
+  "Daily logs": { title: "Daily logs", description: "Field production, weather, workforce, incidents and delays by site day.", table: "project_daily_logs", columns: "id, log_date, weather, work_summary, workforce_count, incidents, delays, created_at", scope: "project" },
   Approvals: { title: "Approvals", description: "Recorded approval decisions and their rationale.", table: "approval_actions", columns: "id, decision, rationale, acted_at, created_at", scope: "project" },
   Issues: { title: "Issues", description: "Open exceptions, ownership and due dates requiring attention.", table: "exceptions", columns: "id, title, severity, status, due_at, description, created_at", scope: "project" },
   Reports: { title: "Reports", description: "A filterable activity ledger from the tenant audit trail.", table: "audit_events", columns: "id, occurred_at, event_type, entity_type, source", scope: "project" },
@@ -912,9 +1005,22 @@ const suiteDefinitions: Record<string, { title: string; description: string; tab
   Inspections: { title: "Inspections", description: "Inspection and verification records awaiting or completing review.", table: "verifications", columns: "id, status, unit, findings, verified_at, created_at", scope: "project" },
   Risks: { title: "Risks", description: "Project exceptions and risk items recorded by the team.", table: "exceptions", columns: "id, title, severity, status, due_at, description, created_at", scope: "project" },
   Finance: { title: "Finance", description: "Release recommendations prepared for authorised financial review.", table: "release_recommendations", columns: "id, recommendation_number, status, recommended_amount, currency_code, rationale, created_at", scope: "project" },
+  "Change orders": { title: "Change orders", description: "Controlled scope and cost changes with an auditable project record.", table: "project_change_orders", columns: "id, change_number, title, status, amount, currency_code, description, created_at", scope: "project" },
 };
 
-function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module: string; projectId: string; organizationId: string; onBack: () => void }) {
+const emptySuiteForm = {
+  title: "", description: "", severity: "medium", dueAt: "",
+  deliveryReference: "", vehicleReference: "", manufacturerBatch: "",
+  certificateReference: "", notes: "", packageId: "", batchId: "",
+  quantity: "", unit: "", findings: "", recommendationNumber: "",
+  amount: "", currency: "GHS", rationale: "", requestNumber: "",
+  itemDescription: "", requestQuantity: "", requestUnit: "", neededBy: "",
+  requestPurpose: "", estimatedRate: "", logDate: "",
+  weather: "", workforceCount: "0", incidents: "", delays: "",
+};
+const SUITE_PAGE_SIZE = 25;
+
+function SuiteWorkspace({ module, projectId, organizationId, membershipRole, onBack }: { module: string; projectId: string; organizationId: string; membershipRole: string; onBack: () => void }) {
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [purchaseRequests, setPurchaseRequests] = useState<Array<{ id: string; request_number: string; status: string; purpose: string | null; needed_by_date: string | null; requested_at: string; purchase_request_lines?: Array<{ description: string; requested_quantity: number; unit: string }> }>>([]);
   const [approvalNotes, setApprovalNotes] = useState<Record<string, string>>({});
@@ -930,10 +1036,28 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
   const [success, setSuccess] = useState("");
   const [savingRequest, setSavingRequest] = useState("");
   const [filter, setFilter] = useState("");
+  const [page, setPage] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
-  const [form, setForm] = useState({ title: "", description: "", severity: "medium", dueAt: "", deliveryReference: "", vehicleReference: "", manufacturerBatch: "", certificateReference: "", notes: "", packageId: "", batchId: "", quantity: "", unit: "", findings: "", recommendationNumber: "", amount: "", currency: "GHS", rationale: "", requestNumber: "", itemDescription: "", requestQuantity: "", requestUnit: "", neededBy: "", requestPurpose: "", estimatedRate: "" });
+  const [form, setForm] = useState(emptySuiteForm);
   const definition = suiteDefinitions[module];
-  const createLabel: Record<string, string> = { Materials: "Request material", Deliveries: "Receive delivery", Issues: "Raise issue", Risks: "Record risk", Inspections: "Submit inspection", Finance: "Prepare recommendation", Team: "Invite colleague" };
+  const createLabel: Record<string, string> = { Materials: "Request material", Deliveries: "Receive delivery", RFIs: "Raise RFI", Submittals: "Create submittal", "Daily logs": "Add daily log", Issues: "Raise issue", Risks: "Record risk", Inspections: "Submit inspection", Finance: "Prepare recommendation", "Change orders": "Propose change", Team: "Invite colleague" };
+  const elevatedRoles = ["organization_owner", "organization_admin", "project_director"];
+  const createRoles: Record<string, string[]> = {
+    Materials: [...elevatedRoles, "contractor_manager", "quantity_surveyor"],
+    Deliveries: [...elevatedRoles, "contractor_manager", "site_receiver"],
+    RFIs: [...elevatedRoles, "contractor_manager", "engineer", "quantity_surveyor"],
+    Submittals: [...elevatedRoles, "contractor_manager", "engineer", "quantity_surveyor"],
+    "Daily logs": [...elevatedRoles, "contractor_manager", "engineer", "site_receiver"],
+    Issues: [...elevatedRoles, "contractor_manager", "engineer", "site_receiver"],
+    Risks: [...elevatedRoles, "contractor_manager", "engineer", "site_receiver"],
+    Inspections: [...elevatedRoles, "contractor_manager", "engineer", "site_receiver", "quantity_surveyor"],
+    Finance: [...elevatedRoles, "finance_reviewer"],
+    "Change orders": [...elevatedRoles, "contractor_manager", "quantity_surveyor", "finance_reviewer"],
+    Team: ["organization_owner", "organization_admin"],
+  };
+  const canCreate = Boolean(createLabel[module] && createRoles[module]?.includes(membershipRole));
+  const canApproveProcurement = ["organization_owner", "organization_admin", "project_director", "finance_reviewer"].includes(membershipRole);
+  const canReviewInspection = ["organization_owner", "organization_admin", "project_director", "engineer", "quantity_surveyor"].includes(membershipRole);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("engineer");
   const [inviteLink, setInviteLink] = useState("");
@@ -954,21 +1078,25 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
     if (!definition || !projectId || !organizationId) return { data: [] as unknown as Record<string, unknown>[], error: "" };
     let result;
     switch (definition.table) {
-      case "projects": result = await supabase.from("projects").select(definition.columns).eq("organization_id", organizationId).order("created_at", { ascending: false }); break;
-      case "verifications": result = await supabase.from("verifications").select(definition.columns).eq("project_id", projectId).order("created_at", { ascending: false }); break;
-      case "material_packages": result = await supabase.from("material_packages").select(definition.columns).eq("project_id", projectId).order("created_at", { ascending: false }); break;
-      case "deliveries": result = await supabase.from("deliveries").select(definition.columns).eq("project_id", projectId).order("created_at", { ascending: false }); break;
-      case "approval_actions": result = await supabase.from("approval_actions").select(definition.columns).eq("project_id", projectId).order("created_at", { ascending: false }); break;
-      case "exceptions": result = await supabase.from("exceptions").select(definition.columns).eq("project_id", projectId).order("created_at", { ascending: false }); break;
-      case "audit_events": result = await supabase.from("audit_events").select(definition.columns).eq("project_id", projectId).order("occurred_at", { ascending: false }); break;
-      case "organization_memberships": result = await supabase.from("organization_memberships").select(definition.columns).eq("organization_id", organizationId).order("created_at", { ascending: false }); break;
-      case "release_recommendations": result = await supabase.from("release_recommendations").select(definition.columns).eq("project_id", projectId).order("created_at", { ascending: false }); break;
+      case "projects": result = await supabase.from("projects").select(definition.columns).eq("organization_id", organizationId).order("created_at", { ascending: false }).limit(250); break;
+      case "verifications": result = await supabase.from("verifications").select(definition.columns).eq("project_id", projectId).order("created_at", { ascending: false }).limit(250); break;
+      case "material_packages": result = await supabase.from("material_packages").select(definition.columns).eq("project_id", projectId).order("created_at", { ascending: false }).limit(250); break;
+      case "deliveries": result = await supabase.from("deliveries").select(definition.columns).eq("project_id", projectId).order("created_at", { ascending: false }).limit(250); break;
+      case "approval_actions": result = await supabase.from("approval_actions").select(definition.columns).eq("project_id", projectId).order("created_at", { ascending: false }).limit(250); break;
+      case "exceptions": result = await supabase.from("exceptions").select(definition.columns).eq("project_id", projectId).order("created_at", { ascending: false }).limit(250); break;
+      case "audit_events": result = await supabase.from("audit_events").select(definition.columns).eq("project_id", projectId).order("occurred_at", { ascending: false }).limit(250); break;
+      case "organization_memberships": result = await supabase.from("organization_memberships").select(definition.columns).eq("organization_id", organizationId).order("created_at", { ascending: false }).limit(250); break;
+      case "release_recommendations": result = await supabase.from("release_recommendations").select(definition.columns).eq("project_id", projectId).order("created_at", { ascending: false }).limit(250); break;
+      case "project_rfis": result = await supabase.from("project_rfis").select(definition.columns).eq("project_id", projectId).order("created_at", { ascending: false }).limit(250); break;
+      case "project_submittals": result = await supabase.from("project_submittals").select(definition.columns).eq("project_id", projectId).order("created_at", { ascending: false }).limit(250); break;
+      case "project_daily_logs": result = await supabase.from("project_daily_logs").select(definition.columns).eq("project_id", projectId).order("log_date", { ascending: false }).limit(250); break;
+      case "project_change_orders": result = await supabase.from("project_change_orders").select(definition.columns).eq("project_id", projectId).order("created_at", { ascending: false }).limit(250); break;
     }
     return { data: (result.data ?? []) as unknown as Record<string, unknown>[], error: result.error?.message ?? "" };
   }, [definition, organizationId, projectId]);
   const loadInvitations = useCallback(async () => {
     if (module !== "Team" || !organizationId) return;
-    const { data, error: invitationError } = await supabase.from("organization_invitations").select("id, email, role, expires_at, accepted_at, revoked_at").eq("organization_id", organizationId).order("created_at", { ascending: false });
+    const { data, error: invitationError } = await supabase.from("organization_invitations").select("id, email, role, expires_at, accepted_at, revoked_at").eq("organization_id", organizationId).order("created_at", { ascending: false }).limit(100);
     if (invitationError) setError(invitationError.message);
     else setInviteRecords((data ?? []).map((invite) => ({ ...invite, expired: new Date(invite.expires_at).getTime() < Date.now() })));
   }, [module, organizationId]);
@@ -988,7 +1116,7 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
     if (module !== "Team" || !organizationId) return;
     let cancelled = false;
     async function refreshInvitations() {
-      const { data, error: invitationError } = await supabase.from("organization_invitations").select("id, email, role, expires_at, accepted_at, revoked_at").eq("organization_id", organizationId).order("created_at", { ascending: false });
+      const { data, error: invitationError } = await supabase.from("organization_invitations").select("id, email, role, expires_at, accepted_at, revoked_at").eq("organization_id", organizationId).order("created_at", { ascending: false }).limit(100);
       if (cancelled) return;
       if (invitationError) setError(invitationError.message);
       else setInviteRecords((data ?? []).map((invite) => ({ ...invite, expired: new Date(invite.expires_at).getTime() < Date.now() })));
@@ -998,7 +1126,7 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
   }, [module, organizationId]);
   const loadPackages = useCallback(async () => {
     if ((module !== "Inspections" && module !== "Deliveries") || !projectId) return [] as Array<{ id: string; name: string; unit: string; approved_quantity: number; received_quantity: number }>;
-    const { data } = await supabase.from("material_packages").select("id, name, approved_quantity, received_quantity, boq_lines!inner(unit, boq_versions!inner(status))").eq("project_id", projectId).eq("boq_lines.boq_versions.status", "approved").order("name");
+    const { data } = await supabase.from("material_packages").select("id, name, approved_quantity, received_quantity, boq_lines!inner(unit, boq_versions!inner(status))").eq("project_id", projectId).eq("boq_lines.boq_versions.status", "approved").order("name").limit(250);
     return (data ?? []).map((row) => {
       const line = Array.isArray(row.boq_lines) ? row.boq_lines[0] : row.boq_lines;
       return { id: row.id, name: row.name, unit: line?.unit ?? "units", approved_quantity: Number(row.approved_quantity), received_quantity: Number(row.received_quantity) };
@@ -1021,7 +1149,7 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
         if (!cancelled) setBatchOptions([]);
         return;
       }
-      const { data } = await supabase.from("material_batches").select("id, manufacturer_batch_reference, delivery_lines!inner(received_quantity, unit)").eq("project_id", projectId).eq("material_package_id", form.packageId).eq("status", "pending_review").order("created_at", { ascending: false });
+      const { data } = await supabase.from("material_batches").select("id, manufacturer_batch_reference, delivery_lines!inner(received_quantity, unit)").eq("project_id", projectId).eq("material_package_id", form.packageId).eq("status", "pending_review").order("created_at", { ascending: false }).limit(250);
       if (cancelled) return;
       const batches = (data ?? []).map((row) => {
         const line = Array.isArray(row.delivery_lines) ? row.delivery_lines[0] : row.delivery_lines;
@@ -1037,12 +1165,12 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
     if ((module !== "Approvals" && module !== "Materials") || !projectId) return [];
     let query = supabase.from("purchase_requests").select("id, request_number, status, purpose, needed_by_date, requested_at, purchase_request_lines(description, requested_quantity, unit)").eq("project_id", projectId);
     if (module === "Approvals") query = query.in("status", ["submitted", "under_review", "queried"]);
-    const { data } = await query.order("created_at", { ascending: false });
+    const { data } = await query.order("created_at", { ascending: false }).limit(100);
     return (data ?? []) as unknown as typeof purchaseRequests;
   }, [module, projectId]);
   const loadInspectionQueue = useCallback(async () => {
     if (module !== "Approvals" || !projectId) return [];
-    const { data } = await supabase.from("verifications").select("id, submitted_by, observed_quantity, unit, findings, created_at, material_packages!inner(name), material_batches(manufacturer_batch_reference)").eq("project_id", projectId).eq("status", "submitted").not("submitted_by", "is", null).order("created_at", { ascending: true });
+    const { data } = await supabase.from("verifications").select("id, submitted_by, observed_quantity, unit, findings, created_at, material_packages!inner(name), material_batches(manufacturer_batch_reference)").eq("project_id", projectId).eq("status", "submitted").not("submitted_by", "is", null).order("created_at", { ascending: true }).limit(100);
     return (data ?? []) as unknown as InspectionReviewRow[];
   }, [module, projectId]);
   useEffect(() => {
@@ -1078,12 +1206,24 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
     } else if (module === "Deliveries") {
       command = "receive_project_material_delivery";
       parameters = { p_project_id: projectId, p_material_package_id: form.packageId, p_received_quantity: Number(form.quantity), p_delivery_reference: normalizePlainText(form.deliveryReference, 120), p_vehicle_reference: normalizePlainText(form.vehicleReference, 120), p_manufacturer_batch_reference: normalizePlainText(form.manufacturerBatch, 120), p_certificate_reference: normalizePlainText(form.certificateReference, 160), p_condition_notes: normalizePlainText(form.notes, 2000) };
+    } else if (module === "RFIs") {
+      command = "create_project_rfi";
+      parameters = { p_project_id: projectId, p_rfi_number: normalizePlainText(form.requestNumber, 48), p_subject: normalizePlainText(form.title, 240), p_question: normalizePlainText(form.description, 6000), p_priority: form.severity === "medium" ? "normal" : form.severity, p_due_at: form.dueAt || null };
+    } else if (module === "Submittals") {
+      command = "create_project_submittal";
+      parameters = { p_project_id: projectId, p_submittal_number: normalizePlainText(form.requestNumber, 48), p_title: normalizePlainText(form.title, 240), p_specification_section: normalizePlainText(form.itemDescription, 160), p_due_at: form.dueAt || null };
+    } else if (module === "Daily logs") {
+      command = "create_project_daily_log";
+      parameters = { p_project_id: projectId, p_log_date: form.logDate, p_weather: normalizePlainText(form.weather, 160), p_work_summary: normalizePlainText(form.description, 8000), p_workforce_count: Number(form.workforceCount), p_incidents: normalizePlainText(form.incidents, 4000), p_delays: normalizePlainText(form.delays, 4000) };
     } else if (module === "Inspections") {
       command = "create_project_batch_inspection";
       parameters = { p_project_id: projectId, p_material_package_id: form.packageId, p_material_batch_id: form.batchId, p_observed_quantity: Number(form.quantity), p_findings: normalizePlainText(form.findings, 4000), p_project_site_id: null };
     } else if (module === "Finance") {
       command = "create_project_release_recommendation";
       parameters = { p_project_id: projectId, p_recommendation_number: normalizePlainText(form.recommendationNumber, 48), p_recommended_amount: form.amount ? Number(form.amount) : null, p_currency_code: form.currency, p_rationale: normalizePlainText(form.rationale, 4000) };
+    } else if (module === "Change orders") {
+      command = "create_project_change_order";
+      parameters = { p_project_id: projectId, p_change_number: normalizePlainText(form.requestNumber, 48), p_title: normalizePlainText(form.title, 240), p_description: normalizePlainText(form.description, 6000), p_amount: form.amount ? Number(form.amount) : null, p_currency_code: form.currency };
     } else {
       setSaving(false);
       return;
@@ -1095,7 +1235,7 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
       } else {
         setSuccess(`${createLabel[module]} saved to the project record.`);
         setCreateOpen(false);
-        setForm({ title: "", description: "", severity: "medium", dueAt: "", deliveryReference: "", vehicleReference: "", manufacturerBatch: "", certificateReference: "", notes: "", packageId: "", batchId: "", quantity: "", unit: "", findings: "", recommendationNumber: "", amount: "", currency: "GHS", rationale: "", requestNumber: "", itemDescription: "", requestQuantity: "", requestUnit: "", neededBy: "", requestPurpose: "", estimatedRate: "" });
+        setForm({ ...emptySuiteForm });
         await loadRecords();
         if (module === "Deliveries") setPackageOptions(await loadPackages());
         if (module === "Materials") setPurchaseRequests(await loadPurchaseRequests());
@@ -1185,6 +1325,9 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
 
   if (!definition) return null;
   const visibleRows = rows.filter((row) => JSON.stringify(row).toLowerCase().includes(filter.toLowerCase()));
+  const pageCount = Math.max(1, Math.ceil(visibleRows.length / SUITE_PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount - 1);
+  const pagedRows = visibleRows.slice(currentPage * SUITE_PAGE_SIZE, (currentPage + 1) * SUITE_PAGE_SIZE);
   function downloadRows() {
     const keys = definition.columns.split(", ").filter((key) => key !== "id");
     const escape = (value: unknown) => `"${String(value ?? "").replaceAll('"', '""')}"`;
@@ -1194,7 +1337,7 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
   }
   return <section className="workspace-content suite-workspace">
     <div className="suite-heading"><div><p className="section-kicker">Project suite</p><h2>{definition.title}</h2><p>{definition.description}</p></div><button className="suite-back" onClick={onBack}>← Project overview</button></div>
-    <div className="suite-toolbar"><label><span className="sr-only">Filter {definition.title.toLowerCase()}</span><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder={`Filter ${definition.title.toLowerCase()}…`} /></label><span>{visibleRows.length} records</span>{createLabel[module] && <button className="suite-create-button" onClick={() => { setCreateOpen((open) => !open); setError(""); setSuccess(""); }}>{createOpen ? "Cancel" : `+ ${createLabel[module]}`}</button>}<button onClick={() => void loadRecords()} disabled={loading}>Refresh</button><button onClick={downloadRows} disabled={!visibleRows.length}>Export CSV</button></div>
+    <div className="suite-toolbar"><label><span className="sr-only">Filter {definition.title.toLowerCase()}</span><input value={filter} onChange={(event) => { setFilter(event.target.value); setPage(0); }} placeholder={`Filter ${definition.title.toLowerCase()}…`} /></label><span>{visibleRows.length} records · {labelize(membershipRole)}</span>{canCreate && <button className="suite-create-button" onClick={() => { setCreateOpen((open) => !open); setError(""); setSuccess(""); }}>{createOpen ? "Cancel" : `+ ${createLabel[module]}`}</button>}{createLabel[module] && !canCreate && <span className="suite-readonly-badge"><ShieldCheck size={13} /> Read-only role</span>}<button onClick={() => void loadRecords()} disabled={loading}>Refresh</button><button onClick={downloadRows} disabled={!visibleRows.length}>Export CSV</button></div>
     {success && <p className="suite-success" role="status">{success}</p>}
     {error && <p className="suite-error" role="alert">{createOpen ? "This action could not be saved:" : "Couldn’t load these tenant records:"} {error}</p>}
     {module === "Evidence" && <EvidenceCapture projectId={projectId} organizationId={organizationId} />}
@@ -1219,6 +1362,20 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
         <label>Receiving condition / notes<textarea required minLength={3} rows={3} maxLength={2000} value={form.notes} onChange={(event) => setFormValue("notes", event.target.value)} placeholder="Describe the received condition, discrepancies or inspection notes" /></label>
         {!packageOptions.length && <p className="suite-form-hint">This project needs an approved Bill of Quantities material package before you can receive materials.</p>}
       </>}
+      {module === "RFIs" && <>
+        <div className="suite-form-row"><label>RFI number<input required minLength={2} maxLength={48} value={form.requestNumber} onChange={(event) => setFormValue("requestNumber", event.target.value)} placeholder="RFI-001" /></label><label>Priority<select value={form.severity} onChange={(event) => setFormValue("severity", event.target.value)}><option value="low">Low</option><option value="medium">Normal</option><option value="high">High</option><option value="critical">Critical</option></select></label><label>Response due<input type="date" value={form.dueAt} onChange={(event) => setFormValue("dueAt", event.target.value)} /></label></div>
+        <label>Subject<input required minLength={3} maxLength={240} value={form.title} onChange={(event) => setFormValue("title", event.target.value)} placeholder="Clarification required" /></label>
+        <label>Question<textarea required minLength={3} maxLength={6000} rows={4} value={form.description} onChange={(event) => setFormValue("description", event.target.value)} placeholder="State the question, drawing reference and decision required" /></label>
+      </>}
+      {module === "Submittals" && <>
+        <div className="suite-form-row"><label>Submittal number<input required minLength={2} maxLength={48} value={form.requestNumber} onChange={(event) => setFormValue("requestNumber", event.target.value)} placeholder="SUB-001" /></label><label>Specification section<input maxLength={160} value={form.itemDescription} onChange={(event) => setFormValue("itemDescription", event.target.value)} placeholder="03 30 00" /></label><label>Review due<input type="date" value={form.dueAt} onChange={(event) => setFormValue("dueAt", event.target.value)} /></label></div>
+        <label>Title<input required minLength={3} maxLength={240} value={form.title} onChange={(event) => setFormValue("title", event.target.value)} placeholder="Concrete mix design" /></label>
+      </>}
+      {module === "Daily logs" && <>
+        <div className="suite-form-row"><label>Site date<input required type="date" value={form.logDate} onChange={(event) => setFormValue("logDate", event.target.value)} /></label><label>Weather<input maxLength={160} value={form.weather} onChange={(event) => setFormValue("weather", event.target.value)} placeholder="Clear, 31°C" /></label><label>Workforce on site<input required type="number" min="0" max="100000" step="1" value={form.workforceCount} onChange={(event) => setFormValue("workforceCount", event.target.value)} /></label></div>
+        <label>Work completed<textarea required minLength={3} maxLength={8000} rows={4} value={form.description} onChange={(event) => setFormValue("description", event.target.value)} placeholder="Summarise work areas, quantities and crews" /></label>
+        <div className="suite-form-row"><label>Safety or quality incidents<textarea maxLength={4000} rows={3} value={form.incidents} onChange={(event) => setFormValue("incidents", event.target.value)} placeholder="None reported" /></label><label>Delays or constraints<textarea maxLength={4000} rows={3} value={form.delays} onChange={(event) => setFormValue("delays", event.target.value)} placeholder="Weather, access, labour or material constraints" /></label></div>
+      </>}
       {module === "Materials" && <>
         <div className="suite-form-row"><label>Request number<input required minLength={2} maxLength={48} value={form.requestNumber} onChange={(event) => setFormValue("requestNumber", event.target.value)} /></label><label>Needed by<input type="date" value={form.neededBy} onChange={(event) => setFormValue("neededBy", event.target.value)} /></label></div>
         <label>Material or service<input required minLength={2} maxLength={500} value={form.itemDescription} onChange={(event) => setFormValue("itemDescription", event.target.value)} /></label>
@@ -1237,23 +1394,29 @@ function SuiteWorkspace({ module, projectId, organizationId, onBack }: { module:
         <div className="suite-form-row"><label>Recommendation number<input required minLength={2} maxLength={48} value={form.recommendationNumber} onChange={(event) => setFormValue("recommendationNumber", event.target.value)} /></label><label>Amount<input type="number" min="0" step="0.01" value={form.amount} onChange={(event) => setFormValue("amount", event.target.value)} /></label><label>Currency<select value={form.currency} onChange={(event) => setFormValue("currency", event.target.value)}><option value="GHS">GHS</option><option value="USD">USD</option><option value="EUR">EUR</option><option value="GBP">GBP</option></select></label></div>
         <label>Rationale<textarea required minLength={3} maxLength={4000} rows={3} value={form.rationale} onChange={(event) => setFormValue("rationale", event.target.value)} /></label>
       </>}
+      {module === "Change orders" && <>
+        <div className="suite-form-row"><label>Change number<input required minLength={2} maxLength={48} value={form.requestNumber} onChange={(event) => setFormValue("requestNumber", event.target.value)} placeholder="CO-001" /></label><label>Estimated value<input type="number" min="0" step="0.01" value={form.amount} onChange={(event) => setFormValue("amount", event.target.value)} /></label><label>Currency<select value={form.currency} onChange={(event) => setFormValue("currency", event.target.value)}><option value="GHS">GHS</option><option value="USD">USD</option><option value="EUR">EUR</option><option value="GBP">GBP</option></select></label></div>
+        <label>Change title<input required minLength={3} maxLength={240} value={form.title} onChange={(event) => setFormValue("title", event.target.value)} /></label>
+        <label>Scope and justification<textarea required minLength={3} maxLength={6000} rows={4} value={form.description} onChange={(event) => setFormValue("description", event.target.value)} placeholder="Describe the scope, cause, programme effect and commercial basis" /></label>
+      </>}
       <button className="suite-save-button" type="submit" disabled={saving || (module === "Deliveries" && !packageOptions.length) || (module === "Inspections" && (!packageOptions.length || !batchOptions.length))}>{saving ? "Saving…" : module === "Deliveries" ? "Record receipt" : module === "Inspections" ? "Submit for review" : "Save record"}</button>
     </form>}
     {module === "Approvals" && <>
       <section className="approval-queue" aria-labelledby="approval-queue-title">
         <div className="approval-queue-heading"><div><h3 id="approval-queue-title">Procurement requests</h3><p>Each decision updates the request and writes to the approval and audit history.</p></div><button onClick={async () => setPurchaseRequests(await loadPurchaseRequests())}>Refresh queue</button></div>
-        {purchaseRequests.length ? <div className="approval-request-list">{purchaseRequests.map((request) => <article className="approval-request" key={request.id}><div><strong>{request.request_number}</strong><span className={`request-status request-${request.status}`}>{labelize(request.status)}</span></div>{request.purchase_request_lines?.map((line, index) => <p key={`${request.id}-line-${index}`}><strong>{line.description}</strong> · {line.requested_quantity} {line.unit}</p>)}<p>{request.purpose || "No additional purpose provided."}</p>{request.needed_by_date && <small>Needed by {request.needed_by_date}</small>}<label>Decision rationale<textarea required minLength={3} rows={2} value={approvalNotes[request.id] ?? ""} onChange={(event) => setApprovalNotes((current) => ({ ...current, [request.id]: event.target.value }))} placeholder="Record the reason for this decision" /></label><div className="approval-actions"><button disabled={savingRequest === request.id} onClick={() => void decideRequest(request.id, "approved")}>Approve request</button><button disabled={savingRequest === request.id} onClick={() => void decideRequest(request.id, "queried")}>Request changes</button><button disabled={savingRequest === request.id} onClick={() => void decideRequest(request.id, "rejected")}>Reject</button></div></article>)}</div> : <p className="suite-empty-queue">No purchase requests are awaiting a decision.</p>}
+        {purchaseRequests.length ? <div className="approval-request-list">{purchaseRequests.map((request) => <article className="approval-request" key={request.id}><div><strong>{request.request_number}</strong><span className={`request-status request-${request.status}`}>{labelize(request.status)}</span></div>{request.purchase_request_lines?.map((line, index) => <p key={`${request.id}-line-${index}`}><strong>{line.description}</strong> · {line.requested_quantity} {line.unit}</p>)}<p>{request.purpose || "No additional purpose provided."}</p>{request.needed_by_date && <small>Needed by {request.needed_by_date}</small>}{canApproveProcurement ? <><label>Decision rationale<textarea required minLength={3} rows={2} value={approvalNotes[request.id] ?? ""} onChange={(event) => setApprovalNotes((current) => ({ ...current, [request.id]: event.target.value }))} placeholder="Record the reason for this decision" /></label><div className="approval-actions"><button disabled={savingRequest === request.id} onClick={() => void decideRequest(request.id, "approved")}>Approve request</button><button disabled={savingRequest === request.id} onClick={() => void decideRequest(request.id, "queried")}>Request changes</button><button disabled={savingRequest === request.id} onClick={() => void decideRequest(request.id, "rejected")}>Reject</button></div></> : <p className="suite-form-hint">Your {labelize(membershipRole)} role can view this queue but cannot record procurement decisions.</p>}</article>)}</div> : <p className="suite-empty-queue">No purchase requests are awaiting a decision.</p>}
       </section>
       <section className="approval-queue" aria-labelledby="inspection-queue-title">
         <div className="approval-queue-heading"><div><h3 id="inspection-queue-title">Independent inspection review</h3><p>Reviewers cannot accept or reject inspections they submitted. Decisions update batch status and verified quantities.</p></div><button onClick={async () => setInspectionQueue(await loadInspectionQueue())}>Refresh queue</button></div>
-        {inspectionQueue.length ? <div className="approval-request-list">{inspectionQueue.map((inspection) => <article className="approval-request" key={inspection.id}><div><strong>{inspection.material_packages?.name ?? "Material inspection"}</strong><span className="request-status request-submitted">Awaiting review</span></div><p><strong>Batch:</strong> {inspection.material_batches?.manufacturer_batch_reference || "Unlabelled batch"} · {inspection.observed_quantity} {inspection.unit ?? "units"}</p><p>{inspection.findings}</p><small>Submitted {new Date(inspection.created_at).toLocaleString()}</small>{inspection.submitted_by === currentUserId ? <p className="suite-form-hint">You submitted this inspection. Another authorized reviewer must make the decision.</p> : <><label>Review rationale<textarea required minLength={3} rows={2} value={inspectionNotes[inspection.id] ?? ""} onChange={(event) => setInspectionNotes((current) => ({ ...current, [inspection.id]: event.target.value }))} placeholder="Record inspection findings and the basis for your decision" /></label><div className="approval-actions"><button disabled={savingInspection === inspection.id} onClick={() => void decideInspection(inspection.id, "accepted")}>Accept batch</button><button disabled={savingInspection === inspection.id} onClick={() => void decideInspection(inspection.id, "rejected")}>Reject batch</button></div></>}</article>)}</div> : <p className="suite-empty-queue">No inspections are awaiting independent review.</p>}
+        {inspectionQueue.length ? <div className="approval-request-list">{inspectionQueue.map((inspection) => <article className="approval-request" key={inspection.id}><div><strong>{inspection.material_packages?.name ?? "Material inspection"}</strong><span className="request-status request-submitted">Awaiting review</span></div><p><strong>Batch:</strong> {inspection.material_batches?.manufacturer_batch_reference || "Unlabelled batch"} · {inspection.observed_quantity} {inspection.unit ?? "units"}</p><p>{inspection.findings}</p><small>Submitted {new Date(inspection.created_at).toLocaleString()}</small>{inspection.submitted_by === currentUserId ? <p className="suite-form-hint">You submitted this inspection. Another authorized reviewer must make the decision.</p> : canReviewInspection ? <><label>Review rationale<textarea required minLength={3} rows={2} value={inspectionNotes[inspection.id] ?? ""} onChange={(event) => setInspectionNotes((current) => ({ ...current, [inspection.id]: event.target.value }))} placeholder="Record inspection findings and the basis for your decision" /></label><div className="approval-actions"><button disabled={savingInspection === inspection.id} onClick={() => void decideInspection(inspection.id, "accepted")}>Accept batch</button><button disabled={savingInspection === inspection.id} onClick={() => void decideInspection(inspection.id, "rejected")}>Reject batch</button></div></> : <p className="suite-form-hint">Your {labelize(membershipRole)} role can view this queue but cannot review inspections.</p>}</article>)}</div> : <p className="suite-empty-queue">No inspections are awaiting independent review.</p>}
       </section>
     </>}
     {module === "Materials" && purchaseRequests.length > 0 && <section className="material-request-log"><h3>Purchase requests</h3>{purchaseRequests.map((request) => <div key={request.id}><strong>{request.request_number}</strong><span>{request.purchase_request_lines?.map((line) => `${line.description} · ${line.requested_quantity} ${line.unit}`).join(", ") || request.purpose || "Material request"}</span><em className={`request-status request-${request.status}`}>{labelize(request.status)}</em></div>)}</section>}
     {module === "Team" && <section className="approval-queue team-invitation-list"><div className="approval-queue-heading"><div><h3>Workspace invitations</h3><p>Invitation status is visible only to members of this tenant.</p></div><button onClick={() => void loadInvitations()}>Refresh invitations</button></div>{inviteRecords.length ? <div className="suite-table-wrap"><table className="suite-table"><thead><tr><th>Email</th><th>Role</th><th>Status</th><th>Expires</th><th>Action</th></tr></thead><tbody>{inviteRecords.map((invitation) => <tr key={invitation.id}><td>{invitation.email}</td><td>{labelize(invitation.role)}</td><td>{invitation.accepted_at ? "Accepted" : invitation.revoked_at ? "Revoked" : invitation.expired ? "Expired" : "Pending"}</td><td>{new Date(invitation.expires_at).toLocaleDateString()}</td><td>{!invitation.accepted_at && !invitation.revoked_at && !invitation.expired && <button className="team-revoke-button" disabled={savingInvitation === invitation.id} onClick={() => void revokeTeamInvitation(invitation.id)}>{savingInvitation === invitation.id ? "Revoking…" : "Revoke"}</button>}</td></tr>)}</tbody></table></div> : <p className="suite-empty-queue">No invitations have been created yet.</p>}</section>}
     <div className="suite-table-wrap"><table className="suite-table"><thead><tr>{definition.columns.split(", ").filter((key) => key !== "id").map((key) => <th key={key}>{labelize(key)}</th>)}</tr></thead><tbody>
-      {loading ? <tr><td colSpan={definition.columns.split(", ").length}>Loading {definition.title.toLowerCase()}…</td></tr> : visibleRows.length ? visibleRows.map((row) => <tr key={String(row.id)}>{definition.columns.split(", ").filter((key) => key !== "id").map((key) => <td key={key}>{row[key] == null || row[key] === "" ? "—" : String(row[key])}</td>)}</tr>) : <tr><td colSpan={definition.columns.split(", ").length}>No {definition.title.toLowerCase()} records found for this project yet.</td></tr>}
+      {loading ? <tr><td colSpan={definition.columns.split(", ").length}>Loading {definition.title.toLowerCase()}…</td></tr> : visibleRows.length ? pagedRows.map((row) => <tr key={String(row.id)}>{definition.columns.split(", ").filter((key) => key !== "id").map((key) => <td key={key}>{row[key] == null || row[key] === "" ? "—" : String(row[key])}</td>)}</tr>) : <tr><td colSpan={definition.columns.split(", ").length}>No {definition.title.toLowerCase()} records found for this project yet.</td></tr>}
     </tbody></table></div>
+    {visibleRows.length > SUITE_PAGE_SIZE && <nav className="suite-pagination" aria-label={`${definition.title} pages`}><span>Showing {currentPage * SUITE_PAGE_SIZE + 1}–{Math.min((currentPage + 1) * SUITE_PAGE_SIZE, visibleRows.length)} of {visibleRows.length}</span><div><button disabled={currentPage === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>Previous</button><strong>{currentPage + 1} / {pageCount}</strong><button disabled={currentPage >= pageCount - 1} onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))}>Next</button></div></nav>}
     <p className="suite-footnote">Records are read from your signed-in tenant under its row-level access rules. Changes to controlled records are reserved for audited, role-checked actions.</p>
   </section>;
 }

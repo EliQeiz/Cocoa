@@ -369,6 +369,103 @@
   border-bottom-color: var(--workspace-orange);
 }
 
+.project-action-menu {
+  width: min(340px, calc(100vw - 30px));
+  max-height: min(560px, calc(100dvh - 165px));
+  overflow-y: auto;
+}
+
+.project-action-menu > strong:not(:first-child) {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.project-switcher-list {
+  display: grid;
+  gap: 4px;
+}
+
+.project-switcher-list button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 49px;
+}
+
+.project-switcher-list button > span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  color: var(--ink-950);
+  font-weight: 680;
+}
+
+.project-switcher-list button small {
+  overflow: hidden;
+  color: var(--ink-500);
+  font-size: 9px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-switcher-list button.is-current {
+  background: var(--brand-50);
+  color: var(--brand-800);
+}
+
+.hero-status span i.is-offline {
+  background: var(--danger);
+  box-shadow: 0 0 0 4px rgba(185, 56, 52, 0.14);
+}
+
+.suite-readonly-badge {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface-soft);
+  color: var(--ink-600);
+  font-size: 9px !important;
+  font-weight: 700;
+}
+
+.suite-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0 2px;
+  color: var(--ink-600);
+  font-size: 10px;
+}
+
+.suite-pagination > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.suite-pagination button {
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: #fff;
+  color: var(--ink-800);
+  font-size: 10px;
+  font-weight: 680;
+}
+
+.suite-pagination strong {
+  min-width: 48px;
+  text-align: center;
+}
+
 .workspace-content,
 .suite-workspace {
   max-width: 1760px;
@@ -896,6 +993,11 @@
 
   .workspace-section-heading p {
     display: none;
+  }
+
+  .suite-pagination {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 

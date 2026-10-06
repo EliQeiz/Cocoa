@@ -121,6 +121,25 @@ async function main() {
               and policyname = 'memberships_read_self_or_admin'
           ) as membership_admin_policy;
       `);
+    const constructionWorkflows = await client.query(`
+        select
+          to_regclass('public.project_rfis') is not null as rfis_table,
+          to_regclass('public.project_submittals') is not null as submittals_table,
+          to_regclass('public.project_daily_logs') is not null as daily_logs_table,
+          to_regclass('public.project_change_orders') is not null as change_orders_table,
+          to_regprocedure('public.create_project_rfi(uuid,text,text,text,text,date)') is not null as rfi_command,
+          to_regprocedure('public.create_project_submittal(uuid,text,text,text,date)') is not null as submittal_command,
+          to_regprocedure('public.create_project_daily_log(uuid,date,text,text,integer,text,text)') is not null as daily_log_command,
+          to_regprocedure('public.create_project_change_order(uuid,text,text,text,numeric,text)') is not null as change_order_command,
+          (
+            select count(*) = 4
+            from pg_class relation
+            join pg_namespace namespace on namespace.oid = relation.relnamespace
+            where namespace.nspname = 'public'
+              and relation.relname in ('project_rfis','project_submittals','project_daily_logs','project_change_orders')
+              and relation.relrowsecurity
+          ) as workflow_rls;
+      `);
     const unsafeDefinerFunctions = await client.query(`
         select namespace.nspname, procedure.proname
         from pg_proc procedure
@@ -192,6 +211,9 @@ async function main() {
       domainRateLimitTriggerAvailable: securityHardening.rows[0].rate_limit_trigger,
       invitationReadRestrictedToAdmins: securityHardening.rows[0].invitation_admin_policy,
       membershipDirectoryRestrictedToSelfOrAdmins: securityHardening.rows[0].membership_admin_policy,
+      constructionWorkflowTablesAvailable: constructionWorkflows.rows[0].rfis_table && constructionWorkflows.rows[0].submittals_table && constructionWorkflows.rows[0].daily_logs_table && constructionWorkflows.rows[0].change_orders_table,
+      constructionWorkflowCommandsAvailable: constructionWorkflows.rows[0].rfi_command && constructionWorkflows.rows[0].submittal_command && constructionWorkflows.rows[0].daily_log_command && constructionWorkflows.rows[0].change_order_command,
+      constructionWorkflowRlsEnabled: constructionWorkflows.rows[0].workflow_rls,
       unsafeSecurityDefinerFunctionCount: unsafeDefinerFunctions.rowCount,
       unsafeSecurityDefinerFunctions: unsafeDefinerFunctions.rows,
       publiclyExposedSecurityDefinerFunctionCount: exposedDefinerFunctions.rowCount,
@@ -202,9 +224,9 @@ async function main() {
     console.log(JSON.stringify(summary, null, 2));
 
     if (
-      summary.tables.length !== 27 ||
-      summary.rlsEnabledTableCount !== 27 ||
-      summary.policyCount !== 27 ||
+      summary.tables.length !== 31 ||
+      summary.rlsEnabledTableCount !== 31 ||
+      summary.policyCount !== 31 ||
       summary.evidenceStoragePolicyCount !== 3 ||
       !summary.evidenceRegistrationCommandAvailable ||
       !summary.materialReceiptCommandAvailable ||
@@ -222,6 +244,9 @@ async function main() {
       !summary.domainRateLimitTriggerAvailable ||
       !summary.invitationReadRestrictedToAdmins ||
       !summary.membershipDirectoryRestrictedToSelfOrAdmins ||
+      !summary.constructionWorkflowTablesAvailable ||
+      !summary.constructionWorkflowCommandsAvailable ||
+      !summary.constructionWorkflowRlsEnabled ||
       summary.unsafeSecurityDefinerFunctionCount !== 0 ||
       summary.publiclyExposedSecurityDefinerFunctionCount !== 0 ||
       summary.directBrowserWriteGrantCount !== 0 ||

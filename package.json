@@ -11,7 +11,8 @@
     "db:migrate": "node scripts/apply-supabase-migration.cjs",
     "db:verify": "node scripts/verify-supabase-foundation.cjs",
     "db:qa:security": "node scripts/qa-security-hardening.cjs",
-    "db:qa:invitations": "node scripts/qa-organization-invitations.cjs"
+    "db:qa:invitations": "node scripts/qa-organization-invitations.cjs",
+    "db:qa:workflows": "node scripts/qa-enterprise-workflows.cjs"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",
