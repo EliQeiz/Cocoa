@@ -19,3 +19,16 @@ Repository automation cannot truthfully enable controls that require plan select
 | Google/Microsoft | OAuth production consent, exact redirect URIs and secret ownership | Provider configuration review |
 
 Review the register quarterly and after any provider, plan, domain or ownership change.
+
+## Verified snapshot — 2026-10-06
+
+- Supabase site URL is aligned to `https://cocoa-nu.vercel.app`; approved production and local auth redirects are registered.
+- Supabase email confirmation, TOTP MFA, AAL1 session limiting, refresh-token replay detection, secure email changes, secure password changes and current-password verification are enabled.
+- Supabase passwords require at least 12 characters with lowercase, uppercase, digits and symbols. Security notifications are enabled for password, email, identity-provider and MFA changes.
+- Supabase custom SMTP, CAPTCHA, scheduled backups, PITR, leaked-password detection and configurable session timeouts remain unavailable or unconfigured. The project is on the Free plan; backups and several advanced controls require Pro.
+- Vercel Authentication protects pre-production deployments. Protected source maps, build logs/source protection, Git fork protection and team-scoped OIDC are enabled.
+- Vercel Firewall is active and Bot Protection is enabled in `Log` mode. Review observed traffic before changing it to `Challenge`.
+- Production environment configuration is present in Vercel and values remain concealed. The canonical production deployment passed the external smoke test after the provider changes.
+- GitHub secret protection and push protection are enabled. Dependency graph and private vulnerability reporting are enabled, and CodeQL runs successfully in CI.
+- GitHub branch protection and Dependabot alert/security-update settings still require an explicit owner-approved access and notification change.
+- Microsoft sign-in remains dependent on an Azure application registration and client secret; a Google account alone cannot provide those credentials.
