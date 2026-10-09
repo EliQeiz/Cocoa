@@ -45,7 +45,13 @@ export default function AuthPage() {
   }, [router]);
 
   useEffect(() => {
-    inviteToken.current = new URLSearchParams(window.location.search).get("invite") ?? "";
+    const query = new URLSearchParams(window.location.search);
+    inviteToken.current = query.get("invite") ?? "";
+    if (query.get("mode") === "signup") {
+      setMode("signup");
+      setMessage("Create an organisation to explore the real BuildProof workspace with your own tenant-isolated data.");
+      setStatus("idle");
+    }
     if (inviteToken.current) {
       setMode("signup");
       setMessage("You have a BuildProof team invitation. Use the invited email address to continue.");
