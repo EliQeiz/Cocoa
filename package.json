@@ -8,6 +8,8 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "qa:ui": "node scripts/qa-ui.cjs",
+    "qa:public": "node scripts/qa-public.cjs",
     "verify:env": "node scripts/validate-environment.cjs",
     "verify:release": "npm run verify:env && npm run lint && npm run typecheck && npm run build && npm run security:audit",
     "smoke": "node scripts/smoke-production.cjs",
@@ -38,6 +40,8 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@playwright/test": "^1.64.0",
     "@tailwindcss/postcss": "4.3.3",
     "@types/node": "26.6.4",
     "@types/react": "19.3.0",

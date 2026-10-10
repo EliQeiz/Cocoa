@@ -13,6 +13,8 @@ out/
 credentials.json
 secrets.json
 *.tsbuildinfo
+test-results/
+app/qa-buildproof-local/
 npm-debug.log*
 
 

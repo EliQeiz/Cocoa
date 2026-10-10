@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono, Plus_Jakarta_Sans } from "next/font/google";
+import { connection } from "next/server";
 import "./globals.css";
 import "./buildproof.css";
 
@@ -13,7 +14,7 @@ const bodyFont = Inter({
 const headingFont = Plus_Jakarta_Sans({
   subsets: ["latin"],
   variable: "--font-jakarta",
-  weight: ["700", "800"],
+  weight: ["600", "700", "800"],
   display: "swap",
 });
 
@@ -47,7 +48,10 @@ export const metadata: Metadata = {
   referrer: "strict-origin-when-cross-origin",
 };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  // Strict nonce CSP needs request-time rendering, including public auth pages.
+  // Prerendered HTML cannot carry the proxy's fresh nonce and will not hydrate.
+  await connection();
   return (
     <html lang="en" className={`${bodyFont.variable} ${headingFont.variable} ${dataFont.variable}`}>
       <body>{children}</body>
