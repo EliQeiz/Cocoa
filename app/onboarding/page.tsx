@@ -1,129 +1,160 @@
 "use client";
 
-import { ArrowRight, Check, ChevronDown, ClipboardList, FileCog, FolderPlus, Home, Landmark, LockKeyhole, LogOut, PackageCheck, ShieldCheck, UsersRound, X } from "lucide-react";
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { ArrowLeft, ArrowRight, Building2, Check, Copy, FolderKanban, LoaderCircle, LockKeyhole, LogOut, Mail, MapPin, ShieldCheck, UserPlus, UsersRound, X } from "lucide-react";
 import Image from "next/image";
-import { supabase } from "../../lib/supabase/client";
+import { useRouter } from "next/navigation";
+import { ReactNode, useEffect, useState } from "react";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 import { normalizeEmail, normalizePlainText } from "../../lib/security/input";
+import { supabase } from "../../lib/supabase/client";
 import { BuildProofBrand } from "../_components/buildproof-brand";
 
-type Draft = { organization: string; organizationType: string; country: string; projectName: string; projectCode: string; invites: string[]; roles: string[]; policies: string[]; step: number };
-const setupSteps = ["Organisation", "Team", "Roles", "Policy", "First project", "Review"];
-const navigation = [[Home, "Home", 1], [FolderPlus, "Projects", 5], [ClipboardList, "Evidence", 4], [PackageCheck, "Materials", 4], [PackageCheck, "Deliveries", 5], [ShieldCheck, "Approvals", 4], [FileCog, "Reports", 6]] as const;
-const initialDraft: Draft = { organization: "", organizationType: "contractor", country: "GH", projectName: "", projectCode: "", invites: [], roles: ["Project manager"], policies: ["Evidence retention"], step: 1 };
+const onboardingSchema = z.object({
+  organization: z.string().trim().min(2, "Enter your organisation name.").max(160),
+  organizationType: z.enum(["contractor", "consultant", "developer", "public"]),
+  country: z.literal("GH"),
+  projectName: z.string().trim().min(2, "Enter the first project name.").max(180),
+  projectCode: z.string().trim().min(2, "Enter a project code.").max(48),
+  clientName: z.string().trim().max(160),
+});
+type OnboardingFields = z.infer<typeof onboardingSchema>;
+type Invite = { email: string; role: string };
+const steps = [
+  { title: "Organisation", description: "Set the tenant identity and operating context.", icon: Building2 },
+  { title: "Project", description: "Create the first controlled project record.", icon: FolderKanban },
+  { title: "Invite team", description: "Give responsible people the right starting access.", icon: UsersRound },
+];
 
 function slugify(value: string) { return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, ""); }
-function toggle(values: string[], value: string) { return values.includes(value) ? values.filter((item) => item !== value) : [...values, value]; }
-function restoreDraft(raw: string): Draft {
-  const value = JSON.parse(raw) as Partial<Draft>;
-  return {
-    organization: normalizePlainText(typeof value.organization === "string" ? value.organization : "", 160),
-    organizationType: ["contractor", "consultant", "public"].includes(value.organizationType ?? "") ? value.organizationType! : "contractor",
-    country: "GH",
-    projectName: normalizePlainText(typeof value.projectName === "string" ? value.projectName : "", 180),
-    projectCode: normalizePlainText(typeof value.projectCode === "string" ? value.projectCode : "", 48),
-    invites: Array.isArray(value.invites) ? value.invites.filter((item): item is string => typeof item === "string").slice(0, 25).map(normalizeEmail) : [],
-    roles: Array.isArray(value.roles) ? value.roles.filter((item): item is string => typeof item === "string").slice(0, 10) : initialDraft.roles,
-    policies: Array.isArray(value.policies) ? value.policies.filter((item): item is string => typeof item === "string").slice(0, 10) : initialDraft.policies,
-    step: typeof value.step === "number" ? Math.max(1, Math.min(6, Math.trunc(value.step))) : 1,
-  };
-}
 
 export default function OnboardingPage() {
   const router = useRouter();
+  const reduceMotion = useReducedMotion();
+  const [step, setStep] = useState(1);
   const [ownerName, setOwnerName] = useState("Project owner");
   const [draftKey, setDraftKey] = useState("");
-  const [draft, setDraft] = useState<Draft>(initialDraft);
+  const [invites, setInvites] = useState<Invite[]>([]);
   const [inviteEmail, setInviteEmail] = useState("");
-  const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
+  const [inviteRole, setInviteRole] = useState("engineer");
+  const [status, setStatus] = useState<"idle" | "saving" | "error" | "ready">("idle");
   const [message, setMessage] = useState("");
   const [createdInviteLinks, setCreatedInviteLinks] = useState<Array<{ email: string; url: string }>>([]);
-  const [organizationReady, setOrganizationReady] = useState(false);
-  const slug = useMemo(() => slugify(draft.organization), [draft.organization]);
-  const update = (values: Partial<Draft>) => setDraft((current) => ({ ...current, ...values }));
+  const form = useForm<OnboardingFields>({ resolver: zodResolver(onboardingSchema), mode: "onBlur", defaultValues: { organization: "", organizationType: "contractor", country: "GH", projectName: "", projectCode: "", clientName: "" } });
+  const values = form.watch();
+  const progress = Math.round((step / 3) * 100);
+  const organisationLabel = values.organization || "Your organisation";
+  const projectLabel = values.projectName || "Your first project";
+  const animation = reduceMotion ? {} : { initial: { opacity: 0, y: 12 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: -8 }, transition: { duration: 0.25 } };
 
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data }) => {
       if (!data.user) return router.replace("/auth");
       const { data: memberships } = await supabase.from("organization_memberships").select("id").eq("user_id", data.user.id).eq("status", "active").limit(1);
       if (memberships?.length) return router.replace("/workspace");
-      const key = `buildproof:onboarding:${data.user.id}`;
+      const key = `buildproof:onboarding:v2:${data.user.id}`;
       setDraftKey(key);
       setOwnerName(data.user.user_metadata.full_name || data.user.email?.split("@")[0] || "Project owner");
       const saved = window.localStorage.getItem(key);
-      if (saved) try { setDraft(restoreDraft(saved)); } catch { window.localStorage.removeItem(key); }
+      if (!saved) return;
+      try {
+        const draft = JSON.parse(saved) as { values?: Partial<OnboardingFields>; invites?: Invite[]; step?: number };
+        form.reset({ ...form.getValues(), ...draft.values, country: "GH" });
+        setInvites(Array.isArray(draft.invites) ? draft.invites.slice(0, 25) : []);
+        setStep(Math.max(1, Math.min(3, Number(draft.step) || 1)));
+      } catch { window.localStorage.removeItem(key); }
     });
-  }, [router]);
+  }, [form, router]);
 
-  useEffect(() => { if (draftKey) window.localStorage.setItem(draftKey, JSON.stringify(draft)); }, [draft, draftKey]);
+  useEffect(() => {
+    if (!draftKey) return;
+    const subscription = form.watch((nextValues) => {
+      try { window.localStorage.setItem(draftKey, JSON.stringify({ values: nextValues, invites, step })); } catch { /* storage can be unavailable */ }
+    });
+    try { window.localStorage.setItem(draftKey, JSON.stringify({ values: form.getValues(), invites, step })); } catch { /* storage can be unavailable */ }
+    return () => subscription.unsubscribe();
+  }, [draftKey, form, invites, step]);
 
-  function moveTo(nextStep: number) { setMessage(""); setStatus("idle"); update({ step: Math.max(1, Math.min(6, nextStep)) }); }
+  async function saveAndExit() {
+    if (draftKey) try { window.localStorage.setItem(draftKey, JSON.stringify({ values: form.getValues(), invites, step })); } catch { /* storage can be unavailable */ }
+    await supabase.auth.signOut();
+    router.replace("/auth");
+  }
+
   function addInvite() {
     const email = normalizeEmail(inviteEmail);
-    if (!/^\S+@\S+\.\S+$/.test(email)) { setStatus("error"); setMessage("Enter a valid colleague email address first."); return; }
-    if (!draft.invites.includes(email)) update({ invites: [...draft.invites, email] });
-    setInviteEmail(""); setMessage(""); setStatus("idle");
+    if (!/^\S+@\S+\.\S+$/.test(email)) { setStatus("error"); setMessage("Enter a valid colleague email address."); return; }
+    if (!invites.some((invite) => invite.email === email)) setInvites((current) => [...current, { email, role: inviteRole }]);
+    setInviteEmail(""); setStatus("idle"); setMessage("");
   }
-  async function saveAndExit() { if (draftKey) window.localStorage.setItem(draftKey, JSON.stringify(draft)); await supabase.auth.signOut(); router.replace("/auth"); }
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (organizationReady) return router.replace("/workspace");
-    if (draft.step < 6) return moveTo(draft.step + 1);
-    if (!draft.organization.trim() || !draft.projectName.trim() || !draft.projectCode.trim()) { setStatus("error"); setMessage("Add an organisation name and your first project name and code before launch."); return; }
+
+  async function nextStep() {
+    setMessage(""); setStatus("idle");
+    const valid = step === 1 ? await form.trigger(["organization", "organizationType", "country"]) : await form.trigger(["projectName", "projectCode", "clientName"]);
+    if (!valid) return;
+    setStep((current) => Math.min(3, current + 1));
+  }
+
+  async function launch(valuesToSubmit: OnboardingFields) {
+    if (step < 3) { await nextStep(); return; }
     setStatus("saving"); setMessage("");
-    const organizationName = normalizePlainText(draft.organization, 160);
-    const projectName = normalizePlainText(draft.projectName, 180);
-    const projectCode = normalizePlainText(draft.projectCode, 48);
-    const { data: organizationId, error: organizationError } = await supabase.rpc("create_organization", { p_legal_name: organizationName, p_display_name: organizationName, p_slug: slug, p_owner_display_name: normalizePlainText(ownerName, 120) });
+    const organizationName = normalizePlainText(valuesToSubmit.organization, 160);
+    const { data: organizationId, error: organizationError } = await supabase.rpc("create_organization", { p_legal_name: organizationName, p_display_name: organizationName, p_slug: slugify(organizationName), p_owner_display_name: normalizePlainText(ownerName, 120) });
     if (organizationError || !organizationId) { setStatus("error"); setMessage(organizationError?.message || "We could not create your organisation."); return; }
-    const { error: projectError } = await supabase.rpc("create_first_project", { p_organization_id: organizationId, p_project_code: projectCode, p_name: projectName, p_client_name: null });
+    const { error: projectError } = await supabase.rpc("create_first_project", { p_organization_id: organizationId, p_project_code: normalizePlainText(valuesToSubmit.projectCode, 48), p_name: normalizePlainText(valuesToSubmit.projectName, 180), p_client_name: normalizePlainText(valuesToSubmit.clientName, 160) || null });
     if (projectError) { setStatus("error"); setMessage(projectError.message); return; }
     const createdLinks: Array<{ email: string; url: string }> = [];
-    for (const email of draft.invites) {
-      const { data, error: inviteError } = await supabase.rpc("create_organization_invitation", { p_organization_id: organizationId, p_email: email, p_role: "engineer" });
-      if (inviteError || !data?.[0]?.invite_token) {
-        setStatus("error");
-        setMessage(`Your workspace and first project are ready, but an invitation for ${email} could not be created: ${inviteError?.message ?? "No invite link was returned."}`);
-        setCreatedInviteLinks(createdLinks);
-        setOrganizationReady(true);
-        if (draftKey) window.localStorage.removeItem(draftKey);
-        return;
-      }
-      createdLinks.push({ email, url: `${window.location.origin}/auth?invite=${encodeURIComponent(data[0].invite_token)}` });
+    for (const invite of invites) {
+      const { data, error } = await supabase.rpc("create_organization_invitation", { p_organization_id: organizationId, p_email: invite.email, p_role: invite.role });
+      if (error || !data?.[0]?.invite_token) { setStatus("error"); setMessage(`The workspace is ready, but ${invite.email} could not be invited: ${error?.message ?? "No invitation token was returned."}`); setCreatedInviteLinks(createdLinks); return; }
+      createdLinks.push({ email: invite.email, url: `${window.location.origin}/auth?invite=${encodeURIComponent(data[0].invite_token)}` });
     }
     if (draftKey) window.localStorage.removeItem(draftKey);
-    if (createdLinks.length) {
-      setCreatedInviteLinks(createdLinks);
-      setOrganizationReady(true);
-      setStatus("idle");
-      setMessage("Your workspace is ready. Copy each secure invitation link and share it with the invited colleague.");
-      return;
-    }
+    if (createdLinks.length) { setCreatedInviteLinks(createdLinks); setStatus("ready"); setMessage("Your workspace is ready. Copy the invitation links, then open the project workspace."); return; }
     router.replace("/workspace");
   }
 
-  const progress = Math.round(((draft.step - 1) / 5) * 100);
-  const team = [ownerName, ...draft.invites];
-  return <main className="onboarding-page"><section className="onboarding-shell">
-    <aside className="onboarding-sidebar"><BuildProofBrand className="onboarding-brand" inverse /><nav aria-label="Workspace setup navigation">{navigation.map(([Icon, label, targetStep]) => <button type="button" className={draft.step === targetStep ? "nav-active" : ""} onClick={() => moveTo(targetStep)} key={label}><Icon size={18} /><span>{label}</span></button>)}</nav><div className="onboarding-side-copy"><i /><strong>Safer sites</strong><strong>Traceable materials</strong><strong>Stronger communities</strong></div></aside>
-    <section className="onboarding-main"><header className="onboarding-topbar"><span><LockKeyhole size={16} /> Secure tenant space</span><button type="button" onClick={() => void saveAndExit()}><LogOut size={16} /> Save and exit</button></header><div className="onboarding-body">
-      <section className="onboarding-form-column"><h1>Set up your organisation</h1><p className="lead">Create a secure space for your team and projects.</p><div className="onboarding-progress" aria-label="Setup progress">{setupSteps.map((label, index) => <button type="button" onClick={() => moveTo(index + 1)} className={draft.step === index + 1 ? "active" : draft.step > index + 1 ? "complete" : ""} key={label}><b>{draft.step > index + 1 ? <Check size={13} /> : index + 1}</b><span>{label}</span></button>)}</div>
-        <form onSubmit={submit} className="setup-form">
-          <SetupCard number={1} active={draft.step === 1} complete={draft.step > 1} icon={<Landmark size={22} />} title="Organisation identity" detail="Tell us about the organisation that will own this workspace." status={draft.organization ? "Complete" : "In progress"} onClick={() => moveTo(1)}><div className="setup-grid three"><label>Organisation name<input required minLength={2} maxLength={160} value={draft.organization} onChange={(event) => update({ organization: event.target.value })} placeholder="Ridgeview Construction" /></label><label>Organisation type<select value={draft.organizationType} onChange={(event) => update({ organizationType: event.target.value })}><option value="contractor">Contractor</option><option value="consultant">Consultant</option><option value="public">Public agency</option></select></label><label>Country<select value={draft.country} onChange={(event) => update({ country: event.target.value })}><option value="GH">🇬🇭 Ghana</option></select></label></div></SetupCard>
-          <SetupCard number={2} active={draft.step === 2} complete={draft.step > 2} icon={<UsersRound size={22} />} title="Invite colleagues" detail="Add the people who need access from day one." status={draft.invites.length ? "Ready" : undefined} onClick={() => moveTo(2)}><div className="invite-composer"><div className="chip-row">{team.map((person, index) => <span key={person}>{person}{index > 0 && <button type="button" aria-label={`Remove ${person}`} onClick={() => update({ invites: draft.invites.filter((invite) => invite !== person) })}><X size={13} /></button>}</span>)}</div><div className="invite-input"><input type="email" inputMode="email" autoCapitalize="none" autoCorrect="off" maxLength={254} aria-label="Colleague email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addInvite(); } }} placeholder="name@organisation.org" /><button type="button" onClick={addInvite}>Add colleague</button></div></div></SetupCard>
-          <SetupCard number={3} active={draft.step === 3} complete={draft.step > 3} icon={<ShieldCheck size={22} />} title="Set up roles" detail="Choose the responsibilities your first team needs." status={draft.roles.length ? "Ready" : undefined} onClick={() => moveTo(3)}><div className="role-chips">{["Project manager", "Site engineer", "Procurement"].map((role) => <button type="button" className={draft.roles.includes(role) ? "selected" : ""} onClick={() => update({ roles: toggle(draft.roles, role) })} key={role}>{draft.roles.includes(role) && <Check size={13} />}{role}</button>)}</div></SetupCard>
-          <SetupCard number={4} active={draft.step === 4} complete={draft.step > 4} icon={<FileCog size={22} />} title="Policy settings" detail="Start with the evidence controls that fit this project." status={draft.policies.length ? "Ready" : undefined} onClick={() => moveTo(4)}><div className="role-chips">{["Evidence retention", "Material verification", "Approvals"].map((policy) => <button type="button" className={draft.policies.includes(policy) ? "selected" : ""} onClick={() => update({ policies: toggle(draft.policies, policy) })} key={policy}>{draft.policies.includes(policy) && <Check size={13} />}{policy}</button>)}</div></SetupCard>
-          <SetupCard number={5} active={draft.step === 5} complete={draft.step > 5} icon={<FolderPlus size={22} />} title="Create your first project" detail="Start the evidence record you will manage in BuildProof." status={draft.projectName && draft.projectCode ? "Ready" : undefined} onClick={() => moveTo(5)}><div className="setup-grid"><label>Project name<input required minLength={2} maxLength={180} value={draft.projectName} onChange={(event) => update({ projectName: event.target.value })} placeholder="Northbank Civic Centre" /></label><label>Project code<input required minLength={2} maxLength={48} value={draft.projectCode} onChange={(event) => update({ projectCode: event.target.value })} placeholder="PRJ-1047" /></label></div></SetupCard>
-          <SetupCard number={6} active={draft.step === 6} complete={false} icon={<Check size={22} />} title="Review and launch" detail="Confirm the setup and create your protected workspace." status={draft.step === 6 ? "Ready to launch" : undefined} onClick={() => moveTo(6)} />
-          {message && <p className={`form-message ${status === "error" ? "is-error" : ""}`} role={status === "error" ? "alert" : "status"}>{message}</p>}{createdInviteLinks.length > 0 && <section className="onboarding-invite-links"><h2>Share team invitations</h2><p>Each link is email-bound and expires after seven days. BuildProof does not send email automatically.</p>{createdInviteLinks.map((invite) => <div key={invite.email}><strong>{invite.email}</strong><input aria-label={`Invitation link for ${invite.email}`} readOnly value={invite.url} /><button type="button" onClick={() => void navigator.clipboard.writeText(invite.url).then(() => setMessage(`Invitation link for ${invite.email} copied.`), () => setMessage("Select and copy the invitation link manually."))}>Copy link</button></div>)}</section>}<div className="setup-actions"><button type="button" className="secondary-action" disabled={draft.step === 1 || organizationReady} onClick={() => moveTo(draft.step - 1)}>Back</button><button className="primary-button" disabled={status === "saving"} type={organizationReady ? "button" : "submit"} onClick={organizationReady ? () => router.replace("/workspace") : undefined}>{status === "saving" ? "Creating your workspace…" : organizationReady ? <>Open workspace <ArrowRight size={18} /></> : draft.step === 6 ? <>Launch workspace <ArrowRight size={18} /></> : <>Continue <ArrowRight size={18} /></>}</button></div>
-        </form>
-      </section>
-      <aside className="onboarding-summary"><article className="progress-summary"><h2>Setup progress</h2><div className="summary-progress"><div style={{ "--progress": progress } as React.CSSProperties}><b>{progress}%</b></div><ol>{setupSteps.map((label, index) => <li className={index + 1 < draft.step ? "done" : index + 1 === draft.step ? "current" : ""} key={label}><i>{index + 1 < draft.step ? <Check size={12} /> : index + 1}</i>{label}</li>)}</ol></div></article><article className="workspace-preview"><div className="panel-heading"><h2>Workspace preview</h2><button type="button" onClick={() => moveTo(5)}>View all →</button></div><Image src="/images/buildproof-project-preview.png" width={560} height={220} alt="Construction project preview" /><h3>{draft.organization || "Your organisation"} <span>{draft.organizationType}</span></h3><p>⌖ Accra, Greater Accra</p><div className="preview-metrics"><span><b>0</b>Projects</span><span><b>{team.length}</b>Team members</span><span><b>{draft.roles.length || "—"}</b>Roles</span><span><b>{draft.policies.length || "—"}</b>Policies</span></div></article><article className="tenant-note-card"><LockKeyhole size={23} /><p><strong>Your data, your organisation</strong><span>Information stays isolated to this tenant and is visible only to authorised team members.</span></p></article></aside>
-    </div></section>
-  </section></main>;
+  return (
+    <main className="min-h-dvh bg-slate-50 text-slate-900">
+      <header className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-5 sm:px-8">
+        <BuildProofBrand compact />
+        <div className="flex items-center gap-3"><span className="hidden items-center gap-2 text-sm font-medium text-slate-600 sm:flex"><LockKeyhole size={16} className="text-orange-600" />Secure tenant setup</span><button type="button" onClick={() => void saveAndExit()} className="flex h-10 items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-orange-100"><LogOut size={16} />Save and exit</button></div>
+      </header>
+      <div className="mx-auto grid w-full max-w-[1440px] gap-8 px-5 py-8 sm:px-8 lg:grid-cols-[240px_minmax(0,1fr)_320px] lg:py-12">
+        <aside>
+          <p className="text-sm font-bold uppercase tracking-[0.08em] text-orange-600">Workspace setup</p>
+          <h1 className="mt-3 font-heading text-[28px] font-bold tracking-[-0.02em]">Start with a controlled project.</h1>
+          <p className="mt-3 text-sm leading-6 text-slate-600">Three focused steps create the tenant, project and initial access model.</p>
+          <ol className="mt-8 space-y-2">
+            {steps.map((item, index) => { const number=index+1; const Icon=item.icon; const active=step===number; const complete=step>number; return <li key={item.title}><button type="button" onClick={() => number <= step && setStep(number)} className={`flex w-full items-start gap-3 rounded-xl border p-3 text-left transition ${active ? "border-orange-200 bg-orange-50" : "border-transparent hover:bg-white"}`}><span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${complete ? "bg-emerald-100 text-emerald-700" : active ? "bg-orange-500 text-white" : "bg-white text-slate-500"}`}>{complete ? <Check size={17} /> : <Icon size={17} />}</span><span><strong className="block text-sm font-bold">{number}. {item.title}</strong><small className="mt-1 block text-xs leading-5 text-slate-500">{item.description}</small></span></button></li>; })}
+          </ol>
+        </aside>
+
+        <section className="min-w-0 rounded-xl border border-slate-200 bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,.04),0_12px_32px_rgba(15,23,42,.06)] sm:p-7">
+          <div className="flex items-center justify-between gap-4"><span className="text-sm font-semibold text-slate-500">Step {step} of 3</span><span className="font-mono text-sm font-semibold tabular-nums text-slate-700">{progress}%</span></div>
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-100"><motion.div className="h-full rounded-full bg-orange-500" animate={{ width: `${progress}%` }} /></div>
+          <form onSubmit={form.handleSubmit(launch)} className="mt-8">
+            <AnimatePresence mode="wait" initial={false}>
+              {step === 1 && <motion.div key="organisation" {...animation}><StepHeading title="Organisation details" description="This creates the tenant boundary that owns your project records." /><div className="mt-7 grid gap-5"><Field label="Organisation name" error={form.formState.errors.organization?.message}><input autoFocus placeholder="Ridgeview Construction" {...form.register("organization")} /></Field><div className="grid gap-5 sm:grid-cols-2"><Field label="Organisation type" error={form.formState.errors.organizationType?.message}><select {...form.register("organizationType")}><option value="contractor">Contractor</option><option value="consultant">Consultant</option><option value="developer">Developer</option><option value="public">Public agency</option></select></Field><Field label="Country"><select {...form.register("country")}><option value="GH">Ghana</option></select></Field></div></div></motion.div>}
+              {step === 2 && <motion.div key="project" {...animation}><StepHeading title="First project" description="Create the project record your delivery, evidence and approvals will attach to." /><div className="mt-7 grid gap-5"><Field label="Project name" error={form.formState.errors.projectName?.message}><input autoFocus placeholder="Northbank Civic Centre" {...form.register("projectName")} /></Field><div className="grid gap-5 sm:grid-cols-2"><Field label="Project code" error={form.formState.errors.projectCode?.message}><input className="font-mono" placeholder="PRJ-1047" {...form.register("projectCode")} /></Field><Field label="Client or owner"><input placeholder="Public Infrastructure Authority" {...form.register("clientName")} /></Field></div></div></motion.div>}
+              {step === 3 && <motion.div key="invite" {...animation}><StepHeading title="Invite your delivery team" description="Add only the people who need access now. You can manage roles later." /><div className="mt-7 rounded-xl border border-slate-200 bg-slate-50 p-4"><div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_170px_auto]"><div className="relative"><Mail size={17} className="absolute left-3 top-3.5 text-slate-400" /><input autoFocus value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addInvite(); } }} placeholder="name@organisation.org" className="h-11 w-full rounded-xl border border-slate-300 bg-white pl-10 pr-3 text-sm outline-none focus:border-orange-500 focus:ring-4 focus:ring-orange-100" /></div><select value={inviteRole} onChange={(event) => setInviteRole(event.target.value)} className="h-11 rounded-xl border border-slate-300 bg-white px-3 text-sm outline-none focus:border-orange-500 focus:ring-4 focus:ring-orange-100"><option value="engineer">Engineer</option><option value="site_receiver">Site receiver</option><option value="quantity_surveyor">Quantity surveyor</option><option value="contractor_manager">Contractor manager</option></select><button type="button" onClick={addInvite} className="h-11 rounded-xl border border-slate-300 bg-white px-4 text-sm font-bold hover:bg-slate-50"><UserPlus size={17} className="mr-2 inline" />Add</button></div></div><div className="mt-5 space-y-2">{invites.length ? invites.map((invite) => <div key={invite.email} className="flex items-center justify-between gap-4 rounded-xl border border-slate-200 px-4 py-3"><div><strong className="block text-sm">{invite.email}</strong><span className="text-xs font-medium text-slate-500">{invite.role.replaceAll("_", " ")}</span></div><button type="button" aria-label={`Remove ${invite.email}`} onClick={() => setInvites((current) => current.filter((item) => item.email !== invite.email))} className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-rose-50 hover:text-rose-700"><X size={17} /></button></div>) : <div className="rounded-xl border border-dashed border-slate-300 px-5 py-8 text-center"><UsersRound className="mx-auto text-slate-400" /><p className="mt-3 text-sm font-semibold">No colleagues added yet</p><p className="mt-1 text-sm text-slate-500">You can launch with just the organisation owner.</p></div>}</div></motion.div>}
+            </AnimatePresence>
+            {message && <p role={status === "error" ? "alert" : "status"} className={`mt-5 rounded-xl border px-4 py-3 text-sm font-medium leading-6 ${status === "error" ? "border-rose-200 bg-rose-50 text-rose-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>{message}</p>}
+            {createdInviteLinks.length > 0 && <div className="mt-4 space-y-2">{createdInviteLinks.map((invite) => <div key={invite.email} className="rounded-xl border border-slate-200 p-3"><strong className="text-sm">{invite.email}</strong><div className="mt-2 flex gap-2"><input readOnly value={invite.url} aria-label={`Invitation link for ${invite.email}`} className="h-10 min-w-0 flex-1 rounded-lg border border-slate-300 px-3 font-mono text-xs" /><button type="button" onClick={() => void navigator.clipboard.writeText(invite.url)} className="grid h-10 w-10 place-items-center rounded-lg border border-slate-300"><Copy size={16} /></button></div></div>)}</div>}
+            <div className="mt-8 flex items-center justify-between border-t border-slate-200 pt-6"><button type="button" disabled={step === 1 || status === "saving"} onClick={() => setStep((current) => Math.max(1, current - 1))} className="flex h-11 items-center gap-2 rounded-xl border border-slate-300 px-4 text-sm font-bold text-slate-700 disabled:opacity-40"><ArrowLeft size={16} />Back</button>{status === "ready" ? <button type="button" onClick={() => router.replace("/workspace")} className="flex h-11 items-center gap-2 rounded-xl bg-orange-500 px-5 text-sm font-bold text-white">Open workspace <ArrowRight size={16} /></button> : step < 3 ? <button type="button" onClick={() => void nextStep()} className="flex h-11 items-center gap-2 rounded-xl bg-orange-500 px-5 text-sm font-bold text-white">Continue <ArrowRight size={16} /></button> : <button type="submit" disabled={status === "saving"} className="flex h-11 items-center gap-2 rounded-xl bg-orange-500 px-5 text-sm font-bold text-white disabled:opacity-70">{status === "saving" ? <><LoaderCircle size={17} className="animate-spin" />Creating workspace…</> : <>Launch workspace <ArrowRight size={16} /></>}</button>}</div>
+          </form>
+        </section>
+
+        <aside className="space-y-4 lg:sticky lg:top-8 lg:self-start">
+          <article className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,.04),0_12px_32px_rgba(15,23,42,.06)]"><div className="relative aspect-[16/8.5]"><Image src="/images/buildproof-project-preview.png" alt="Workspace project preview" fill className="object-cover" sizes="320px" /></div><div className="p-5"><div className="flex items-start justify-between gap-3"><div><h2 className="font-heading text-lg font-bold">{organisationLabel}</h2><p className="mt-1 flex items-center gap-1.5 text-sm text-slate-500"><MapPin size={14} />Accra, Ghana</p></div><span className="rounded-full bg-orange-50 px-2.5 py-1 text-xs font-bold text-orange-700">{values.organizationType}</span></div><div className="mt-5 rounded-xl bg-sky-50 p-4"><span className="text-xs font-bold uppercase tracking-[0.07em] text-sky-700">First project</span><strong className="mt-1 block text-sm">{projectLabel}</strong><span className="mt-1 block font-mono text-xs text-slate-500">{values.projectCode || "Project code pending"}</span></div></div></article>
+          <article className="rounded-xl border border-slate-200 bg-white p-5"><div className="flex gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-700"><ShieldCheck size={20} /></span><div><h2 className="text-sm font-bold">Your data, your organisation</h2><p className="mt-1 text-sm leading-6 text-slate-600">Records stay within this tenant and remain subject to role-based access controls.</p></div></div></article>
+        </aside>
+      </div>
+    </main>
+  );
 }
 
-function SetupCard({ number, active, complete, icon, title, detail, status, onClick, children }: { number: number; active: boolean; complete: boolean; icon: ReactNode; title: string; detail: string; status?: string; onClick: () => void; children?: ReactNode }) {
-  return <section className={`setup-card ${active ? "is-active" : ""} ${complete ? "is-complete" : ""}`}><button className="setup-card-hit" type="button" aria-label={`Open ${title}`} onClick={onClick} /><div className="setup-card-status">{complete ? <Check size={14} /> : number}</div><div className="card-icon">{icon}</div><div className="setup-card-copy"><h2>{title}</h2><p>{detail}</p></div><span className={`setup-state ${status ? "is-progress" : ""}`}>{status ?? "Not started"}</span><ChevronDown className="setup-chevron" size={17} />{children && <div className="setup-card-fields">{children}</div>}</section>;
-}
+function StepHeading({ title, description }: { title: string; description: string }) { return <header><h2 className="font-heading text-[28px] font-bold tracking-[-0.02em]">{title}</h2><p className="mt-2 text-base leading-7 text-slate-600">{description}</p></header>; }
+function Field({ label, error, children }: { label: string; error?: string; children: ReactNode }) { return <label className="grid gap-2 text-sm font-semibold text-slate-700">{label}<span className="[&_input]:h-12 [&_input]:w-full [&_input]:rounded-xl [&_input]:border [&_input]:border-slate-300 [&_input]:px-4 [&_input]:text-sm [&_input]:font-normal [&_input]:outline-none [&_input]:focus:border-orange-500 [&_input]:focus:ring-4 [&_input]:focus:ring-orange-100 [&_select]:h-12 [&_select]:w-full [&_select]:rounded-xl [&_select]:border [&_select]:border-slate-300 [&_select]:bg-white [&_select]:px-4 [&_select]:text-sm [&_select]:font-normal [&_select]:outline-none [&_select]:focus:border-orange-500 [&_select]:focus:ring-4 [&_select]:focus:ring-orange-100">{children}</span>{error && <small role="alert" className="text-sm font-medium text-rose-700">{error}</small>}</label>; }

@@ -1,7 +1,29 @@
 @import "tailwindcss";
 
+@theme {
+  --color-orange-50: #fff7ed;
+  --color-orange-100: #ffedd5;
+  --color-orange-300: #fdba74;
+  --color-orange-500: #f97316;
+  --color-orange-600: #ea580c;
+  --color-sky-50: #f2fafd;
+  --color-sky-100: #e3f5fb;
+  --color-sky-200: #c8e9f5;
+  --color-sky-300: #9ddcf0;
+  --color-sky-400: #66c4e8;
+  --color-sky-500: #3ca7cf;
+  --color-sky-600: #2789b0;
+  --font-heading: var(--font-jakarta);
+  --font-body: var(--font-inter);
+  --font-mono: var(--font-jetbrains);
+  --shadow-card: 0 1px 2px rgba(16, 43, 67, 0.04), 0 10px 28px rgba(16, 43, 67, 0.06);
+  --shadow-card-hover: 0 2px 3px rgba(16, 43, 67, 0.04), 0 16px 38px rgba(16, 43, 67, 0.1);
+}
+
 :root {
   color-scheme: light;
+  --font-ui: var(--font-inter);
+  --font-editorial: var(--font-jakarta);
 }
 
 * {
@@ -10,10 +32,22 @@
 
 body {
   margin: 0;
-  min-width: 320px;
-  background: #f4f1ec;
-  color: #211d19;
-  font-family: var(--font-ui), "Segoe UI", sans-serif;
+  min-width: 0;
+  background: #ffffff;
+  color: #142a3b;
+  font-family: var(--font-inter), "Segoe UI", sans-serif;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+}
+
+.landing-brand .buildproof-wordmark small {
+  font-size: 10px;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
 }

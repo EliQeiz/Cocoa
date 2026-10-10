@@ -28,17 +28,23 @@ import {
   Settings,
   ShieldCheck,
   TextQuote,
+  UploadCloud,
   UsersRound,
   X,
+  type LucideIcon,
 } from "lucide-react";
 import Image from "next/image";
 import { FormEvent, ReactNode, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import * as Tabs from "@radix-ui/react-tabs";
+import * as Tooltip from "@radix-ui/react-tooltip";
 import { supabase } from "../../lib/supabase/client";
 import { normalizeEmail, normalizePlainText } from "../../lib/security/input";
 import { BuildProofBrand } from "../_components/buildproof-brand";
+import { WorkspaceDataTable } from "../_components/workspace/data-table";
 
-const navigationGroups = [
+const navigationGroups: Array<{ label: string; items: Array<[LucideIcon, string]> }> = [
   {
     label: "Overview",
     items: [
@@ -65,6 +71,15 @@ const navigationGroups = [
     items: [
       [FileText, "Reports"],
       [UsersRound, "Team"],
+      [Settings, "Settings"],
+    ],
+  },
+  {
+    label: "More",
+    items: [
+      [ShieldCheck, "Inspections"],
+      [CircleAlert, "Risks"],
+      [ReceiptText, "Finance"],
     ],
   },
 ];
@@ -157,16 +172,21 @@ function labelize(value: string) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function SidebarNavButton({ Icon, label, active, collapsed, count, onSelect }: { Icon: LucideIcon; label: string; active: boolean; collapsed: boolean; count?: number; onSelect: () => void }) {
+  const button = <button aria-current={active ? "page" : undefined} onClick={onSelect} className={active ? "nav-active" : ""}><Icon size={18} /><span>{label}</span>{Boolean(count) && <b className="nav-count">{count}</b>}</button>;
+  if (!collapsed) return button;
+  return <Tooltip.Root><Tooltip.Trigger asChild>{button}</Tooltip.Trigger><Tooltip.Portal><Tooltip.Content className="nav-tooltip" side="right" sideOffset={9}>{label}<Tooltip.Arrow className="nav-tooltip-arrow" /></Tooltip.Content></Tooltip.Portal></Tooltip.Root>;
+}
+
 export default function WorkspacePage() {
   const router = useRouter();
   const [activeSection, setActiveSection] = useState("Home");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [openMenu, setOpenMenu] = useState<"project" | "notifications" | "account" | null>(null);
+  const [openMenu, setOpenMenu] = useState<"project" | null>(null);
   const [mapLayer, setMapLayer] = useState<"Satellite" | "Map" | "Terrain">("Satellite");
   const [mapZoom, setMapZoom] = useState(1);
   const [siteDialog, setSiteDialog] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const [organization, setOrganization] = useState("Your organisation");
   const [organizationId, setOrganizationId] = useState("");
@@ -191,6 +211,29 @@ export default function WorkspacePage() {
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [workspaceRevision, setWorkspaceRevision] = useState(0);
   const [realtimeStatus, setRealtimeStatus] = useState<"connecting" | "live" | "offline">("connecting");
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      try {
+        setSidebarCollapsed(localStorage.getItem("buildproof:sidebar-collapsed") === "true");
+      } catch {
+        // Private browsing can disable storage; the in-memory state still works.
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  function toggleSidebar() {
+    setSidebarCollapsed((current) => {
+      const next = !current;
+      try {
+        localStorage.setItem("buildproof:sidebar-collapsed", String(next));
+      } catch {
+        // Keep the interaction available even when storage is unavailable.
+      }
+      return next;
+    });
+  }
 
   useEffect(() => {
     function focusWorkspaceSearch(event: KeyboardEvent) {
@@ -591,26 +634,13 @@ export default function WorkspacePage() {
     await supabase.auth.signOut();
     router.replace("/auth");
   }
-  const tabs = [
-    "Overview",
-    "Evidence",
-    "Materials",
-    "Deliveries",
-    "RFIs",
-    "Submittals",
-    "Daily logs",
-    "Inspections",
-    "Approvals",
-    "Risks",
-    "Finance",
-    "Change orders",
-  ];
   return (
+    <Tooltip.Provider delayDuration={250}>
     <main className={`workspace-page ${sidebarCollapsed ? "is-collapsed" : ""}`}>
       <aside className={`workspace-sidebar ${sidebarOpen ? "is-open" : ""}`}>
         <div className="workspace-logo">
-          <BuildProofBrand compact inverse />
-          <button className="rail-toggle" type="button" title={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"} aria-label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"} aria-expanded={!sidebarCollapsed} onClick={() => setSidebarCollapsed((value) => !value)}><Menu size={19} /></button>
+          <BuildProofBrand compact />
+          <button className="rail-toggle" type="button" title={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"} aria-label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"} aria-expanded={!sidebarCollapsed} onClick={toggleSidebar}><Menu size={19} /></button>
         </div>
         <button className="sidebar-search" type="button" onClick={() => document.getElementById("workspace-global-search")?.focus()}>
           <Search size={17} />
@@ -621,25 +651,10 @@ export default function WorkspacePage() {
           {navigationGroups.map((group) => (
             <div className="nav-group" key={group.label}>
               <p>{group.label}</p>
-              {group.items.map(([Icon, label]) => (
-                <button
-                  key={label as string}
-                  aria-current={activeSection === label ? "page" : undefined}
-                  onClick={() => navigate(label as string)}
-                  className={activeSection === label ? "nav-active" : ""}
-                >
-                  <Icon size={18} />
-                  <span>{label as string}</span>
-                  <ChevronDown className="nav-chevron" size={14} />
-                </button>
-              ))}
+              {group.items.map(([Icon, label]) => <SidebarNavButton key={label as string} Icon={Icon} label={label as string} active={activeSection === label} collapsed={sidebarCollapsed} count={label === "Approvals" ? stats.approvalsPending : label === "Issues" ? stats.activeRisks : undefined} onSelect={() => navigate(label as string)} />)}
             </div>
           ))}
         </nav>
-        <button className={`sidebar-settings ${activeSection === "Settings" ? "nav-active" : ""}`} onClick={() => { setSuiteName(null); setActiveSection("Settings"); setSettingsOpen(true); }}>
-          <Settings size={19} />
-          <span>Settings</span>
-        </button>
         <div className="sidebar-workspace-card">
           <span>{userInitials}</span>
           <p><small>Current workspace</small><strong>{organization}</strong></p>
@@ -652,7 +667,7 @@ export default function WorkspacePage() {
           <button className="mobile-menu" aria-label={sidebarOpen ? "Close navigation" : "Open navigation"} aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((value) => !value)}>
             {sidebarOpen ? <X size={21} /> : <Menu size={21} />}
           </button>
-          <div>
+          <div className="project-identity">
             <span className="header-context">Project command centre</span>
             <h1>
               <button className="project-title-button" onClick={() => setOpenMenu(openMenu === "project" ? null : "project")}>
@@ -663,6 +678,16 @@ export default function WorkspacePage() {
               <MapPinned size={13} /> {location} <span>•</span> {projectCode}{" "}
               <span>•</span> <UsersRound size={13} /> {projectClient}
             </p>
+            {openMenu === "project" && <div className="project-action-menu">
+              <strong>Switch project</strong>
+              <div className="project-switcher-list">
+                {projectOptions.map((option) => <button className={option.id === projectId ? "is-current" : ""} key={option.id} onClick={() => { setSelectedProjectId(option.id); setSuiteName(null); setActiveSection("Home"); setOpenMenu(null); }}><span>{option.name}<small>{option.project_code} · {labelize(option.status)}</small></span>{option.id === projectId && <CheckCircle2 size={15} />}</button>)}
+              </div>
+              <strong>Project actions</strong>
+              <button onClick={() => void updateProjectStatus(projectStatus === "active" ? "on_hold" : "active")}>{projectStatus === "active" ? "Place on hold" : "Mark project active"}</button>
+              <button onClick={() => void updateProjectStatus("completed")}>Mark complete</button>
+              <button onClick={exportEvidence}>Export evidence ledger</button>
+            </div>}
           </div>
           <form className="workspace-global-search" onSubmit={handleWorkspaceSearch} role="search">
             <Search size={18} aria-hidden="true" />
@@ -679,47 +704,31 @@ export default function WorkspacePage() {
             <span>
               <CalendarDays size={15} /> {projectRange}
             </span>
-            <div className="header-progress">
-              <i style={{ width: `${stats.progress}%` }} />
-            </div>
-            <b>{stats.progress}% complete</b>
+            <div className="header-progress-ring" style={{ background: `conic-gradient(#f97316 ${stats.progress * 3.6}deg, #e2e8f0 0deg)` }}><i>{stats.progress}%</i></div>
           </div>
           <div className="header-actions">
-            <button className="icon-action" aria-label="Notifications" onClick={() => setOpenMenu(openMenu === "notifications" ? null : "notifications")}><Bell size={19} /></button>
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild><button className="icon-action" aria-label="Notifications"><Bell size={19} /></button></DropdownMenu.Trigger>
+              <DropdownMenu.Portal><DropdownMenu.Content className="header-popover radix-menu-content" sideOffset={8} align="end"><DropdownMenu.Label>Notifications</DropdownMenu.Label><p>{ledger.length ? `${ledger.length} recent project updates are available.` : "You’re all caught up."}</p><DropdownMenu.Item onSelect={() => navigate("Evidence")}>Review project activity</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal>
+            </DropdownMenu.Root>
             <span className="avatar">{userInitials}</span>
-            <button className="user-name account-action" onClick={() => setOpenMenu(openMenu === "account" ? null : "account")}>
-              {userName}<small>{userEmail || "Project workspace"}</small>
-              <ChevronDown size={15} />
-            </button>
-            {openMenu === "notifications" && <div className="header-popover"><strong>Notifications</strong><p>{ledger.length ? `${ledger.length} recent project updates are available.` : "You’re all caught up."}</p><button onClick={() => navigate("Evidence")}>Review project activity</button></div>}
-            {openMenu === "account" && <div className="header-popover account-popover"><strong>{userName}</strong><p>{userEmail}</p><button onClick={() => { setSuiteName(null); setActiveSection("Settings"); setSettingsOpen(true); setOpenMenu(null); }}>Workspace settings</button><button onClick={() => void signOut()}>Sign out</button></div>}
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild><button className="user-name account-action">{userName}<small>{userEmail || "Project workspace"}</small><ChevronDown size={15} /></button></DropdownMenu.Trigger>
+              <DropdownMenu.Portal><DropdownMenu.Content className="header-popover account-popover radix-menu-content" sideOffset={8} align="end"><DropdownMenu.Label>{userName}</DropdownMenu.Label><p>{userEmail}</p><DropdownMenu.Separator /><DropdownMenu.Item onSelect={() => navigate("Settings")}>Workspace settings</DropdownMenu.Item><DropdownMenu.Item onSelect={() => setNotice("Use the project switcher beside the project name to change workspace context.")}>Switch workspace</DropdownMenu.Item><DropdownMenu.Separator /><DropdownMenu.Item onSelect={() => void signOut()}>Sign out</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal>
+            </DropdownMenu.Root>
           </div>
         </header>
-        <nav className="project-tabs">
-          {tabs.map((tab) => (
-            <button
-              key={tab}
-              className={activeSection === tab || (tab === "Overview" && activeSection === "Home") ? "selected" : ""}
-              onClick={() => navigate(tab)}
-            >
-              {tab}
-            </button>
-          ))}
-          <button className="project-actions" onClick={() => setOpenMenu(openMenu === "project" ? null : "project")}>
-            Project actions <ChevronDown size={14} />
-          </button>
-          {openMenu === "project" && <div className="project-action-menu">
-            <strong>Switch project</strong>
-            <div className="project-switcher-list">
-              {projectOptions.map((option) => <button className={option.id === projectId ? "is-current" : ""} key={option.id} onClick={() => { setSelectedProjectId(option.id); setSuiteName(null); setActiveSection("Home"); setOpenMenu(null); }}><span>{option.name}<small>{option.project_code} · {labelize(option.status)}</small></span>{option.id === projectId && <CheckCircle2 size={15} />}</button>)}
-            </div>
-            <strong>Project actions</strong>
-            <button onClick={() => void updateProjectStatus(projectStatus === "active" ? "on_hold" : "active")}>{projectStatus === "active" ? "Place on hold" : "Mark project active"}</button>
-            <button onClick={() => void updateProjectStatus("completed")}>Mark complete</button>
-            <button onClick={exportEvidence}>Export evidence ledger</button>
-          </div>}
-        </nav>
-        {suiteName ? (
+        {activeSection === "Settings" ? (
+          <SettingsWorkspace
+            organization={organization}
+            project={project}
+            projectCode={projectCode}
+            projectStatus={projectStatus}
+            membershipRole={membershipRole}
+            userEmail={userEmail}
+            onBack={() => navigate("Home")}
+          />
+        ) : suiteName ? (
           <SuiteWorkspace
             key={`${suiteName}-${projectId}-${organizationId}`}
             module={suiteName}
@@ -985,9 +994,33 @@ export default function WorkspacePage() {
         </section>}
       </section>
       {siteDialog && <div className="dialog-backdrop" role="presentation" onClick={() => setSiteDialog(false)}><section className="site-dialog" role="dialog" aria-modal="true" aria-labelledby="site-dialog-title" onClick={(event) => event.stopPropagation()}><button className="dialog-close" aria-label="Close site details" onClick={() => setSiteDialog(false)}>×</button><p className="section-kicker">Project site</p><h2 id="site-dialog-title">{project}</h2><p>{location} · {projectCode}</p><div><span>Coordinates</span><strong>5.6037° N, 0.1870° W</strong></div><div><span>Client</span><strong>{projectClient}</strong></div><button className="primary-button" onClick={() => setSiteDialog(false)}>Done</button></section></div>}
-      {settingsOpen && <div className="dialog-backdrop" role="presentation" onClick={() => setSettingsOpen(false)}><section className="site-dialog settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-dialog-title" onClick={(event) => event.stopPropagation()}><button className="dialog-close" aria-label="Close settings" onClick={() => setSettingsOpen(false)}>×</button><p className="section-kicker">Workspace</p><h2 id="settings-dialog-title">Settings</h2><p>Organization and project details connected to this tenant.</p><div><span>Organization</span><strong>{organization}</strong></div><div><span>Project</span><strong>{project} · {projectCode}</strong></div><div><span>Project state</span><strong>{labelize(projectStatus)}</strong></div><div><span>Data access</span><strong>Tenant protected</strong></div><button className="primary-button" onClick={() => setSettingsOpen(false)}>Done</button></section></div>}
     </main>
+    </Tooltip.Provider>
   );
+}
+
+function SettingsWorkspace({ organization, project, projectCode, projectStatus, membershipRole, userEmail, onBack }: { organization: string; project: string; projectCode: string; projectStatus: string; membershipRole: string; userEmail: string; onBack: () => void }) {
+  return <section className="settings-workspace">
+    <header className="suite-header">
+      <div><button className="suite-back" onClick={onBack}>← Overview</button><p className="section-kicker">Workspace administration</p><h2>Settings</h2><p>Organisation, project, people and security controls for this tenant.</p></div>
+    </header>
+    <Tabs.Root className="settings-tabs" defaultValue="organisation">
+      <Tabs.List aria-label="Workspace settings">
+        <Tabs.Trigger value="organisation">Organisation</Tabs.Trigger>
+        <Tabs.Trigger value="project">Project</Tabs.Trigger>
+        <Tabs.Trigger value="members">Members</Tabs.Trigger>
+        <Tabs.Trigger value="security">Security</Tabs.Trigger>
+      </Tabs.List>
+      <Tabs.Content value="organisation"><SettingsPanel title="Organisation profile" description="The tenant identity shown across projects and controlled exports." fields={[['Organisation name', organization], ['Data boundary', 'Tenant isolated'], ['Region', 'Ghana']]} /></Tabs.Content>
+      <Tabs.Content value="project"><SettingsPanel title="Project defaults" description="The current delivery context used by workspace modules." fields={[['Project name', project], ['Project code', projectCode], ['Project state', labelize(projectStatus)]]} /></Tabs.Content>
+      <Tabs.Content value="members"><SettingsPanel title="Your access" description="Membership and role details are enforced by database row-level policies." fields={[['Signed-in account', userEmail || 'Authenticated user'], ['Workspace role', labelize(membershipRole)], ['Access status', 'Active']]} /></Tabs.Content>
+      <Tabs.Content value="security"><SettingsPanel title="Security posture" description="Controls inherited by every project record and uploaded evidence asset." fields={[['Authentication', 'Supabase Auth'], ['Database access', 'Row-level security'], ['Evidence storage', 'Private signed URLs'], ['Audit history', 'Enabled']]} /></Tabs.Content>
+    </Tabs.Root>
+  </section>;
+}
+
+function SettingsPanel({ title, description, fields }: { title: string; description: string; fields: Array<[string, string]> }) {
+  return <article className="settings-panel"><div><h3>{title}</h3><p>{description}</p></div><dl>{fields.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl></article>;
 }
 
 const suiteDefinitions: Record<string, { title: string; description: string; table: "projects" | "verifications" | "material_packages" | "deliveries" | "approval_actions" | "exceptions" | "audit_events" | "organization_memberships" | "release_recommendations" | "project_rfis" | "project_submittals" | "project_daily_logs" | "project_change_orders"; columns: string; scope: "project" | "organization" }> = {
@@ -1413,9 +1446,15 @@ function SuiteWorkspace({ module, projectId, organizationId, membershipRole, onB
     </>}
     {module === "Materials" && purchaseRequests.length > 0 && <section className="material-request-log"><h3>Purchase requests</h3>{purchaseRequests.map((request) => <div key={request.id}><strong>{request.request_number}</strong><span>{request.purchase_request_lines?.map((line) => `${line.description} · ${line.requested_quantity} ${line.unit}`).join(", ") || request.purpose || "Material request"}</span><em className={`request-status request-${request.status}`}>{labelize(request.status)}</em></div>)}</section>}
     {module === "Team" && <section className="approval-queue team-invitation-list"><div className="approval-queue-heading"><div><h3>Workspace invitations</h3><p>Invitation status is visible only to members of this tenant.</p></div><button onClick={() => void loadInvitations()}>Refresh invitations</button></div>{inviteRecords.length ? <div className="suite-table-wrap"><table className="suite-table"><thead><tr><th>Email</th><th>Role</th><th>Status</th><th>Expires</th><th>Action</th></tr></thead><tbody>{inviteRecords.map((invitation) => <tr key={invitation.id}><td>{invitation.email}</td><td>{labelize(invitation.role)}</td><td>{invitation.accepted_at ? "Accepted" : invitation.revoked_at ? "Revoked" : invitation.expired ? "Expired" : "Pending"}</td><td>{new Date(invitation.expires_at).toLocaleDateString()}</td><td>{!invitation.accepted_at && !invitation.revoked_at && !invitation.expired && <button className="team-revoke-button" disabled={savingInvitation === invitation.id} onClick={() => void revokeTeamInvitation(invitation.id)}>{savingInvitation === invitation.id ? "Revoking…" : "Revoke"}</button>}</td></tr>)}</tbody></table></div> : <p className="suite-empty-queue">No invitations have been created yet.</p>}</section>}
-    <div className="suite-table-wrap"><table className="suite-table"><thead><tr>{definition.columns.split(", ").filter((key) => key !== "id").map((key) => <th key={key}>{labelize(key)}</th>)}</tr></thead><tbody>
-      {loading ? <tr><td colSpan={definition.columns.split(", ").length}>Loading {definition.title.toLowerCase()}…</td></tr> : visibleRows.length ? pagedRows.map((row) => <tr key={String(row.id)}>{definition.columns.split(", ").filter((key) => key !== "id").map((key) => <td key={key}>{row[key] == null || row[key] === "" ? "—" : String(row[key])}</td>)}</tr>) : <tr><td colSpan={definition.columns.split(", ").length}>No {definition.title.toLowerCase()} records found for this project yet.</td></tr>}
-    </tbody></table></div>
+    <WorkspaceDataTable
+      title={definition.title}
+      columns={definition.columns.split(", ").filter((key) => key !== "id")}
+      rows={pagedRows}
+      loading={loading}
+      canCreate={canCreate}
+      createLabel={createLabel[module]}
+      onCreate={() => setCreateOpen(true)}
+    />
     {visibleRows.length > SUITE_PAGE_SIZE && <nav className="suite-pagination" aria-label={`${definition.title} pages`}><span>Showing {currentPage * SUITE_PAGE_SIZE + 1}–{Math.min((currentPage + 1) * SUITE_PAGE_SIZE, visibleRows.length)} of {visibleRows.length}</span><div><button disabled={currentPage === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>Previous</button><strong>{currentPage + 1} / {pageCount}</strong><button disabled={currentPage >= pageCount - 1} onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))}>Next</button></div></nav>}
     <p className="suite-footnote">Records are read from your signed-in tenant under its row-level access rules. Changes to controlled records are reserved for audited, role-checked actions.</p>
   </section>;
@@ -1442,6 +1481,8 @@ function EvidenceCapture({ projectId, organizationId }: { projectId: string; org
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [previewUrl, setPreviewUrl] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -1510,6 +1551,7 @@ function EvidenceCapture({ projectId, organizationId }: { projectId: string; org
     event.preventDefault();
     if (!file || !deliveryId) return;
     setSaving(true);
+    setUploadProgress(12);
     setError("");
     setNotice("");
     let objectPath = "";
@@ -1521,11 +1563,13 @@ function EvidenceCapture({ projectId, organizationId }: { projectId: string; org
       }
       if (!globalThis.crypto?.subtle) throw new Error("This browser cannot calculate the evidence checksum securely.");
       const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+      setUploadProgress(38);
       const sha256 = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
       const extension = file.type === "image/jpeg" ? "jpg" : file.type === "image/png" ? "png" : "pdf";
       objectPath = `${organizationId}/${projectId}/${user.id}/${crypto.randomUUID()}.${extension}`;
       const { error: uploadError } = await supabase.storage.from("buildproof-evidence").upload(objectPath, file, { contentType: file.type, cacheControl: "3600", upsert: false });
       if (uploadError) throw new Error(uploadError.message);
+      setUploadProgress(76);
       const { error: registerError } = await supabase.rpc("register_delivery_evidence", {
         p_project_id: projectId,
         p_delivery_id: deliveryId,
@@ -1541,16 +1585,26 @@ function EvidenceCapture({ projectId, organizationId }: { projectId: string; org
         throw new Error(registerError.message);
       }
       setFile(null);
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      setPreviewUrl("");
       setCaption("");
       const input = document.getElementById("evidence-file-input") as HTMLInputElement | null;
       if (input) input.value = "";
       setNotice("Evidence uploaded, linked to the delivery and recorded in the audit history.");
+      setUploadProgress(100);
       await load();
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : "The evidence file could not be uploaded.");
     } finally {
       setSaving(false);
+      window.setTimeout(() => setUploadProgress(0), 500);
     }
+  }
+
+  function chooseEvidenceFile(nextFile: File | null) {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setFile(nextFile);
+    setPreviewUrl(nextFile?.type.startsWith("image/") ? URL.createObjectURL(nextFile) : "");
   }
 
   return <section className="evidence-capture" aria-labelledby="evidence-capture-title">
@@ -1559,9 +1613,15 @@ function EvidenceCapture({ projectId, organizationId }: { projectId: string; org
     {error && <p className="suite-error" role="alert">{error}</p>}
     <form className="evidence-upload-form" onSubmit={(event) => void uploadEvidence(event)}>
       <label>Project delivery<select required value={deliveryId} onChange={(event) => setDeliveryId(event.target.value)}><option value="">Select a delivery</option>{deliveries.map((delivery) => <option key={delivery.id} value={delivery.id}>{delivery.delivery_reference || "Unreferenced delivery"}{delivery.vehicle_reference ? ` · ${delivery.vehicle_reference}` : ""} · {labelize(delivery.status)}</option>)}</select></label>
-      <label>Evidence file<input id="evidence-file-input" required type="file" accept="image/jpeg,image/png,application/pdf" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /><small>JPEG, PNG or PDF · up to 25 MB</small></label>
+      <label className="evidence-drop-zone" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); chooseEvidenceFile(event.dataTransfer.files?.[0] ?? null); }}>
+        <input id="evidence-file-input" required type="file" accept="image/jpeg,image/png,application/pdf" onChange={(event) => chooseEvidenceFile(event.target.files?.[0] ?? null)} />
+        {previewUrl ? <Image src={previewUrl} alt="Selected evidence preview" width={160} height={96} unoptimized /> : <UploadCloud size={25} aria-hidden="true" />}
+        <strong>{file ? file.name : "Drop evidence here or choose a file"}</strong>
+        <small>{file ? `${(file.size / 1024 / 1024).toFixed(2)} MB · ready to upload` : "JPEG, PNG or PDF · up to 25 MB"}</small>
+      </label>
       <label>What does this show?<textarea required minLength={3} maxLength={1000} rows={2} value={caption} onChange={(event) => setCaption(event.target.value)} placeholder="Describe what the evidence records" /></label>
       <button className="suite-save-button" type="submit" disabled={saving || !deliveries.length}>{saving ? "Uploading and recording…" : "Upload evidence"}</button>
+      {uploadProgress > 0 && <div className="evidence-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={uploadProgress}><i style={{ width: `${uploadProgress}%` }} /><span>{uploadProgress}%</span></div>}
       {!deliveries.length && <p className="suite-form-hint">Register a delivery first. Evidence must be connected to a project record.</p>}
     </form>
     <div className="evidence-record-list"><h4>Recorded evidence <span>{records.length}</span></h4>{loading ? <p className="evidence-empty">Loading secure evidence records…</p> : records.length ? records.map((record) => <article className="evidence-record" key={record.id}><div className="evidence-record-file"><FileCheck2 size={18} aria-hidden="true" /><div><strong>{record.filename}</strong><span>{record.delivery} · {(record.byte_size / 1024 / 1024).toFixed(2)} MB</span></div></div><p>{record.caption}</p><small>SHA-256 · {record.sha256.slice(0, 16)}… · {new Date(record.created_at).toLocaleString()}</small>{record.signed_url && <a href={record.signed_url} target="_blank" rel="noreferrer">Open secure preview</a>}</article>) : <p className="evidence-empty">No evidence has been attached to a delivery in this project yet.</p>}</div>
