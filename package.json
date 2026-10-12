@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "qa:ui": "node scripts/qa-ui.cjs",
+    "qa:demo": "node scripts/qa-demo.cjs",
     "qa:public": "node scripts/qa-public.cjs",
     "verify:env": "node scripts/validate-environment.cjs",
     "verify:release": "npm run verify:env && npm run lint && npm run typecheck && npm run build && npm run security:audit",

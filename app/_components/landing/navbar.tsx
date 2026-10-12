@@ -35,6 +35,7 @@ export function Navbar() {
 
           <div className="hidden items-center gap-2 xl:flex">
             <Button href="/auth" variant="ghost" size="compact">Sign in</Button>
+            <Button href="/demo" variant="secondary" size="compact">Explore demo</Button>
             <Button href="#pilot" size="compact">Request a pilot <ArrowRight size={16} /></Button>
           </div>
 
@@ -48,7 +49,7 @@ export function Navbar() {
             <motion.nav id="mobile-navigation" aria-label="Mobile navigation" className="overflow-hidden border-t border-[#DCE7ED] bg-white xl:hidden" initial={reduceMotion ? false : { height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.25 }}>
               <Container className="grid gap-1 py-5">
                 {navigation.map((item) => <a key={item.label} href={item.href} onClick={() => setMenuOpen(false)} className="rounded-xl px-4 py-3 text-base font-semibold text-[#294256] transition hover:bg-[#F3FBFD] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#BFE8F7]">{item.label}</a>)}
-                <div className="mt-3 grid grid-cols-2 gap-3"><Button href="/auth" variant="secondary">Sign in</Button><Button href="#pilot">Request a pilot</Button></div>
+                <div className="mt-3 grid gap-3 sm:grid-cols-3"><Button href="/auth" variant="secondary">Sign in</Button><Button href="/demo" variant="secondary">Explore demo</Button><Button href="#pilot">Request a pilot</Button></div>
               </Container>
             </motion.nav>
           ) : null}

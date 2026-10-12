@@ -17,8 +17,8 @@ export function Hero() {
             </h1>
             <p className="mt-6 max-w-[620px] text-[18px] leading-8 text-[#526878]">BuildProof connects material deliveries, site evidence, quality tests and professional approvals in one accountable project record—so every acceptance and release decision has a defensible basis.</p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <Button href="#pilot" size="large">Discuss a Live Project <ArrowRight size={18} /></Button>
-              <Button href="#workflow" variant="secondary" size="large">See the Workflow</Button>
+              <Button href="/demo" size="large">Explore the Workspace <ArrowRight size={18} /></Button>
+              <Button href="#pilot" variant="secondary" size="large">Discuss a Live Project</Button>
             </div>
             <ul className="mt-7 flex flex-wrap gap-x-5 gap-y-3 text-sm font-semibold text-[#526878]" aria-label="Pilot reassurance">
               {["One live project", "90-day pilot", "Measured outcome"].map((item) => <li key={item} className="flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-lg bg-[#E8F6F1] text-[#24785F]"><Check size={14} strokeWidth={2.5} /></span>{item}</li>)}

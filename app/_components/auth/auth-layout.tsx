@@ -18,10 +18,10 @@ export function AuthLayout({ children }: { children: ReactNode }) {
               <BuildProofBrand compact />
             </Link>
             <Link
-              href="/"
+              href="/demo"
               className="flex items-center gap-1 text-sm text-slate-600 hover:text-orange-700"
             >
-              Back to site <ArrowUpRight size={15} />
+              Explore demo <ArrowUpRight size={15} />
             </Link>
           </div>
           <div className="hidden flex-1 flex-col justify-center py-10 lg:flex">
