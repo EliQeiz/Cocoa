@@ -3,10 +3,13 @@
 import {
   Bell,
   CalendarDays,
+  Camera,
   CheckCircle2,
   ChevronDown,
   CircleAlert,
   ClipboardCheck,
+  Cloud,
+  CloudOff,
   Command,
   FileCheck2,
   FileText,
@@ -34,6 +37,7 @@ import {
 import Image from "next/image";
 import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useOffline } from "next/offline";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Tabs from "@radix-ui/react-tabs";
@@ -44,6 +48,16 @@ import { BuildProofBrand } from "../_components/buildproof-brand";
 import { WorkspaceDataTable } from "../_components/workspace/data-table";
 import { CommandPalette } from "../_components/workspace/command-palette";
 import { StatCard } from "../_components/workspace/stat-card";
+import {
+  clearOfflineData,
+  listOfflineOperations,
+  loadLatestWorkspaceSnapshot,
+  loadWorkspaceSnapshot,
+  queueOfflineOperation,
+  removeOfflineOperation,
+  saveWorkspaceSnapshot,
+  subscribeToQueueChange,
+} from "../../lib/offline/store";
 
 const navigationGroups: Array<{
   label: string;
@@ -219,6 +233,7 @@ function SidebarNavButton({
 
 export default function WorkspacePage() {
   const router = useRouter();
+  const isOffline = useOffline();
   const [activeSection, setActiveSection] = useState("Home");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -248,6 +263,7 @@ export default function WorkspacePage() {
   const [userName, setUserName] = useState("Project lead");
   const [userEmail, setUserEmail] = useState("");
   const [userInitials, setUserInitials] = useState("BP");
+  const [currentUserId, setCurrentUserId] = useState("");
   const [membershipRole, setMembershipRole] = useState("funder_viewer");
   const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
@@ -255,6 +271,59 @@ export default function WorkspacePage() {
   const [realtimeStatus, setRealtimeStatus] = useState<
     "connecting" | "live" | "offline"
   >("connecting");
+  const [queuedOperations, setQueuedOperations] = useState(0);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+
+  useEffect(() => {
+    if (!currentUserId) return;
+    let cancelled = false;
+    const refreshCount = async () => {
+      try {
+        const records = await listOfflineOperations(currentUserId, organizationId || undefined, projectId || undefined);
+        if (!cancelled) setQueuedOperations(records.length);
+      } catch {
+        // IndexedDB may be disabled by browser privacy settings.
+      }
+    };
+    void refreshCount();
+    const unsubscribe = subscribeToQueueChange(() => void refreshCount());
+    window.addEventListener("online", refreshCount);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+      window.removeEventListener("online", refreshCount);
+    };
+  }, [currentUserId, organizationId, projectId]);
+
+  useEffect(() => {
+    if (!currentUserId || !organizationId || !projectId) return;
+    let syncing = false;
+    const synchroniseQueuedRecords = async () => {
+      if (syncing || !navigator.onLine) return;
+      syncing = true;
+      let completed = 0;
+      try {
+        const queued = await listOfflineOperations(currentUserId, organizationId, projectId);
+        for (const operation of queued) {
+          const { error } = await supabase.rpc(operation.command, operation.parameters as never);
+          if (error) break;
+          await removeOfflineOperation(operation.id);
+          completed += 1;
+        }
+        if (completed) {
+          setWorkspaceRevision((revision) => revision + 1);
+          setNotice(`${completed} queued field ${completed === 1 ? "record has" : "records have"} synchronised to the project record.`);
+        }
+      } catch {
+        // The queue remains intact until the next safe retry.
+      } finally {
+        syncing = false;
+      }
+    };
+    void synchroniseQueuedRecords();
+    window.addEventListener("online", synchroniseQueuedRecords);
+    return () => window.removeEventListener("online", synchroniseQueuedRecords);
+  }, [currentUserId, organizationId, projectId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -324,6 +393,7 @@ export default function WorkspacePage() {
   useEffect(() => {
     let cancelled = false;
     async function loadWorkspace() {
+      let snapshotUserId = "";
       try {
         setLoading(true);
         const {
@@ -331,6 +401,8 @@ export default function WorkspacePage() {
         } = await supabase.auth.getSession();
         if (cancelled) return;
         if (!session) return router.replace("/auth");
+        snapshotUserId = session.user.id;
+        setCurrentUserId(session.user.id);
 
         const email = normalizeEmail(session.user.email ?? "");
         const metadataName = normalizePlainText(
@@ -585,11 +657,33 @@ export default function WorkspacePage() {
             };
           }),
         );
+        setLastSyncedAt(new Date());
       } catch {
         if (cancelled) return;
-        setNotice(
-          "We couldn’t finish loading the project. Please refresh to try again.",
-        );
+        const snapshot = snapshotUserId
+          ? await loadLatestWorkspaceSnapshot(snapshotUserId).catch(() => undefined)
+          : undefined;
+        if (cancelled) return;
+        if (snapshot) {
+          const payload = snapshot.payload;
+          setOrganization(String(payload.organization ?? "Your organisation"));
+          setOrganizationId(String(payload.organizationId ?? ""));
+          setProject(String(payload.project ?? "Your first project"));
+          setProjectCode(String(payload.projectCode ?? "—"));
+          setProjectClient(String(payload.projectClient ?? "Public infrastructure"));
+          setProjectRange(String(payload.projectRange ?? "Project dates to be confirmed"));
+          setProjectStatus(String(payload.projectStatus ?? "planning"));
+          setLocation(String(payload.location ?? "Location not set"));
+          if (payload.stats) setStats(payload.stats as DashboardStats);
+          if (Array.isArray(payload.materials)) setMaterials(payload.materials as MaterialRow[]);
+          if (Array.isArray(payload.ledger)) setLedger(payload.ledger as LedgerRow[]);
+          setProjectId(snapshot.projectId);
+          setSelectedProjectId(snapshot.projectId);
+          setLastSyncedAt(new Date(snapshot.savedAt));
+          setNotice("Field mode is active. You are viewing the last secure device snapshot; new field records will queue until connectivity returns.");
+        } else {
+          setNotice("We couldn’t finish loading the project. Please reconnect and refresh to continue.");
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -599,6 +693,51 @@ export default function WorkspacePage() {
       cancelled = true;
     };
   }, [router, selectedProjectId, workspaceRevision]);
+
+  useEffect(() => {
+    if (loading || !currentUserId || !projectId) return;
+    void saveWorkspaceSnapshot({
+      key: `${currentUserId}:${projectId}`,
+      userId: currentUserId,
+      projectId,
+      savedAt: new Date().toISOString(),
+      payload: {
+        organization,
+        organizationId,
+        project,
+        projectCode,
+        projectClient,
+        projectRange,
+        projectStatus,
+        location,
+        stats,
+        materials,
+        ledger,
+      },
+    }).catch(() => undefined);
+  }, [currentUserId, ledger, loading, location, materials, organization, organizationId, project, projectClient, projectCode, projectId, projectRange, projectStatus, stats]);
+
+  useEffect(() => {
+    if (!isOffline || !currentUserId || !projectId) return;
+    void loadWorkspaceSnapshot(currentUserId, projectId).then((snapshot) => {
+      if (!snapshot) return;
+      const payload = snapshot.payload;
+      setOrganization(String(payload.organization ?? organization));
+      setOrganizationId(String(payload.organizationId ?? organizationId));
+      setProject(String(payload.project ?? project));
+      setProjectCode(String(payload.projectCode ?? projectCode));
+      setProjectClient(String(payload.projectClient ?? projectClient));
+      setProjectRange(String(payload.projectRange ?? projectRange));
+      setProjectStatus(String(payload.projectStatus ?? projectStatus));
+      setLocation(String(payload.location ?? location));
+      if (payload.stats) setStats(payload.stats as DashboardStats);
+      if (Array.isArray(payload.materials)) setMaterials(payload.materials as MaterialRow[]);
+      if (Array.isArray(payload.ledger)) setLedger(payload.ledger as LedgerRow[]);
+      setLastSyncedAt(new Date(snapshot.savedAt));
+      setNotice("Field mode is active. You are viewing the last secure device snapshot; new field records will queue until connectivity returns.");
+      setLoading(false);
+    }).catch(() => undefined);
+  }, [currentUserId, isOffline, location, organization, organizationId, project, projectClient, projectCode, projectId, projectRange, projectStatus]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -741,6 +880,11 @@ export default function WorkspacePage() {
     );
   }
   async function signOut() {
+    if (currentUserId) await clearOfflineData(currentUserId).catch(() => undefined);
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.filter((key) => key.startsWith("buildproof-")).map((key) => caches.delete(key)));
+    }
     await supabase.auth.signOut();
     router.replace("/auth");
   }
@@ -1035,47 +1179,53 @@ export default function WorkspacePage() {
                   </button>
                 </div>
               )}
+              <section className="project-command-hero" aria-labelledby="command-centre-title">
+                <Image
+                  src="/images/buildproof-project-preview.png"
+                  alt=""
+                  fill
+                  priority
+                  sizes="(max-width: 980px) 100vw, 80vw"
+                />
+                <div className="command-hero-overlay" />
+                <div className="command-hero-copy">
+                  <span><ShieldCheck size={15} /> Project command centre</span>
+                  <h2 id="command-centre-title">Control today’s site decisions.</h2>
+                  <p>
+                    {stats.activeRisks
+                      ? `${stats.activeRisks} active risks need attention. `
+                      : "No active risks are open. "}
+                    {stats.approvalsPending} approvals and {stats.evidenceReview} evidence records are waiting for review.
+                  </p>
+                </div>
+                <div className="command-sync-card" data-offline={isOffline || realtimeStatus === "offline"}>
+                  {isOffline || realtimeStatus === "offline" ? <CloudOff size={18} /> : <Cloud size={18} />}
+                  <span>{isOffline ? "Field mode" : realtimeStatus === "live" ? "Securely synchronised" : "Connecting"}</span>
+                  <strong>{queuedOperations ? `${queuedOperations} queued` : `${stats.progress}%`}</strong>
+                  <small>
+                    {queuedOperations
+                      ? "Uploads resume automatically"
+                      : lastSyncedAt
+                        ? `Updated ${lastSyncedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                        : "Preparing project record"}
+                  </small>
+                </div>
+                <div className="command-quick-actions">
+                  <button onClick={() => navigate("Evidence")}><UploadCloud size={18} /><span><small>Field records</small>Capture evidence</span><b>↗</b></button>
+                  <button onClick={() => navigate("Deliveries")}><ReceiptText size={18} /><span><small>Site logistics</small>Record delivery</span><b>↗</b></button>
+                  <button onClick={() => navigate("Approvals")}><ClipboardCheck size={18} /><span><small>Decision queue</small>Review approvals</span><b>↗</b></button>
+                  <button onClick={() => navigate("Issues")}><CircleAlert size={18} /><span><small>Attention required</small>Open issues</span><b>↗</b></button>
+                </div>
+              </section>
               <div className="workspace-section-heading">
                 <div>
-                  <h2>Project overview</h2>
-                  <p>
-                    The evidence, decisions and deliveries behind {project}.
-                  </p>
+                  <span className="section-kicker">Project overview</span>
+                  <h2>Performance at a glance</h2>
+                  <p>The evidence, decisions and deliveries behind {project}.</p>
                 </div>
-                <div className="dashboard-actions">
-                  <button onClick={() => navigate("Deliveries")}>
-                    <ReceiptText size={17} />
-                    Record delivery
-                  </button>
-                  <button onClick={() => navigate("Evidence")}>
-                    <UploadCloud size={17} />
-                    Add evidence
-                  </button>
-                </div>
-              </div>
-              <div className="project-pulse">
-                <div>
-                  <ShieldCheck size={22} />
-                  <p>
-                    <strong>
-                      {stats.approvalsPending} approvals awaiting review.
-                    </strong>{" "}
-                    {stats.activeRisks
-                      ? `${stats.activeRisks} active risks need your team’s attention.`
-                      : "No active risks recorded."}
-                  </p>
-                </div>
-                <span>
-                  <i
-                    className={realtimeStatus === "offline" ? "is-offline" : ""}
-                  />
-                  {loading
-                    ? "Loading project"
-                    : realtimeStatus === "live"
-                      ? "Live updates"
-                      : realtimeStatus === "offline"
-                        ? "Last synced data"
-                        : "Connecting updates"}
+                <span className="overview-live-state">
+                  <i className={isOffline ? "is-offline" : ""} />
+                  {isOffline ? "Working from device" : "Live tenant data"}
                 </span>
               </div>
               <div className="metric-grid" id="workspace-overview">
@@ -1372,6 +1522,13 @@ export default function WorkspacePage() {
             </section>
           )}
         </section>
+        <nav className="workspace-mobile-nav" aria-label="Mobile workspace navigation">
+          <button className={activeSection === "Home" ? "is-active" : ""} onClick={() => navigate("Home")}><Home size={20} /><span>Home</span></button>
+          <button className={activeSection === "Evidence" ? "is-active" : ""} onClick={() => navigate("Evidence")}><FileCheck2 size={20} /><span>Evidence</span></button>
+          <button className="mobile-capture" onClick={() => navigate("Evidence")} aria-label="Capture field evidence"><Camera size={22} /><span>Capture</span></button>
+          <button className={activeSection === "Approvals" ? "is-active" : ""} onClick={() => navigate("Approvals")}><ClipboardCheck size={20} /><span>Approvals</span></button>
+          <button onClick={() => setSidebarOpen(true)}><Menu size={20} /><span>More</span></button>
+        </nav>
         <Dialog.Root open={siteDialog} onOpenChange={setSiteDialog}>
           <Dialog.Portal>
             <Dialog.Overlay className="record-drawer-overlay" />
@@ -2315,6 +2472,20 @@ function SuiteWorkspace({
       return;
     }
     try {
+      if (!navigator.onLine) {
+        await queueOfflineOperation({
+          userId: currentUserId,
+          organizationId,
+          projectId,
+          module,
+          command,
+          parameters,
+        });
+        setSuccess(`${createLabel[module]} stored securely on this device. It will synchronise automatically when the connection returns.`);
+        setCreateOpen(false);
+        setForm({ ...emptySuiteForm });
+        return;
+      }
       const { error: commandError } = await supabase.rpc(
         command,
         parameters as never,

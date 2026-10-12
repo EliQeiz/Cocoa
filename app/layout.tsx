@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono, Plus_Jakarta_Sans } from "next/font/google";
 import { connection } from "next/server";
+import { RegisterServiceWorker } from "./_components/offline/register-service-worker";
 import "./globals.css";
 import "./buildproof.css";
+import "./styles/workspace-command.css";
 
 const bodyFont = Inter({
   subsets: ["latin"],
@@ -46,6 +48,13 @@ export const metadata: Metadata = {
   },
   robots: { index: true, follow: true },
   referrer: "strict-origin-when-cross-origin",
+  manifest: "/manifest.webmanifest",
+  applicationName: "BuildProof",
+  appleWebApp: {
+    capable: true,
+    title: "BuildProof",
+    statusBarStyle: "black-translucent",
+  },
 };
 
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
@@ -54,7 +63,10 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   await connection();
   return (
     <html lang="en" className={`${bodyFont.variable} ${headingFont.variable} ${dataFont.variable}`}>
-      <body>{children}</body>
+      <body>
+        <RegisterServiceWorker />
+        {children}
+      </body>
     </html>
   );
 }

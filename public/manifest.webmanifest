@@ -1,8 +1,18 @@
 {
   "name": "BuildProof",
   "short_name": "BuildProof",
-  "description": "Evidence-first construction material control.",
+  "description": "Offline-ready construction evidence, material and project control.",
+  "start_url": "/workspace",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#0c0f0d",
-  "theme_color": "#174a36"
+  "background_color": "#f8fafc",
+  "theme_color": "#101828",
+  "icons": [
+    {
+      "src": "/icons/buildproof-app.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
 }

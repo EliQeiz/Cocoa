@@ -361,7 +361,7 @@ async function run() {
       "DEL-026",
     );
     await page
-      .getByRole("navigation", { name: "Workspace navigation" })
+      .getByRole("navigation", { name: "Workspace navigation", exact: true })
       .getByRole("button", { name: "Settings", exact: true })
       .click();
     await page.getByRole("tab", { name: "Security", exact: true }).click();
@@ -405,6 +405,11 @@ async function run() {
       );
     }
     await page.setViewportSize({ width: 360, height: 800 });
+    expect(
+      await page.locator(".workspace-header").evaluate((element) =>
+        Math.round(element.getBoundingClientRect().top),
+      ),
+    ).toBe(0);
     await page.getByRole("button", { name: "Open navigation" }).click();
     await expect(
       page.getByRole("dialog", { name: "Workspace menu" }),
@@ -415,7 +420,7 @@ async function run() {
     ).toBeFocused();
     await page.getByRole("button", { name: "Open navigation" }).click();
     await page
-      .getByRole("navigation")
+      .getByRole("navigation", { name: "Workspace navigation", exact: true })
       .getByRole("button", { name: "Evidence", exact: true })
       .click();
     await expect(
