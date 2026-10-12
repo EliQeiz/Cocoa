@@ -281,6 +281,17 @@ async function run() {
     for (const width of [320, 360, 768, 1280, 1536])
       await inspect(page, "workspace", width);
     await page.setViewportSize({ width: 1536, height: 900 });
+    await page.getByRole("button", { name: "Switch to dark mode" }).click();
+    await expect(page.locator(".workspace-page")).toHaveAttribute(
+      "data-theme",
+      "dark",
+    );
+    await inspect(page, "workspace-dark", 1536);
+    await page.getByRole("button", { name: "Switch to light mode" }).click();
+    await expect(page.locator(".workspace-page")).toHaveAttribute(
+      "data-theme",
+      "light",
+    );
     await page
       .getByRole("button", { name: /Northbank Civic Centre Active/ })
       .click();
@@ -414,6 +425,22 @@ async function run() {
     await expect(
       page.getByRole("dialog", { name: "Workspace menu" }),
     ).toBeVisible();
+    await page
+      .getByRole("dialog", { name: "Workspace menu" })
+      .getByRole("button", { name: "Switch to dark mode" })
+      .click();
+    await expect(page.locator(".workspace-page")).toHaveAttribute(
+      "data-theme",
+      "dark",
+    );
+    await page
+      .getByRole("dialog", { name: "Workspace menu" })
+      .getByRole("button", { name: "Switch to light mode" })
+      .click();
+    await expect(page.locator(".workspace-page")).toHaveAttribute(
+      "data-theme",
+      "light",
+    );
     await page.keyboard.press("Escape");
     await expect(
       page.getByRole("button", { name: "Open navigation" }),

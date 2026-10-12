@@ -20,6 +20,7 @@ import {
   Menu,
   MoreHorizontal,
   Mountain,
+  Moon,
   NotebookPen,
   PackageCheck,
   ReceiptText,
@@ -31,6 +32,7 @@ import {
   TextQuote,
   UploadCloud,
   UsersRound,
+  Sun,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -110,6 +112,29 @@ type MaterialRow = {
   status: string;
   style: "is-verified" | "is-review" | "is-flagged";
   visualIndex: number;
+};
+
+const suiteToneByLabel: Record<
+  string,
+  "orange" | "amber" | "blue" | "green" | "red" | "violet" | "slate"
+> = {
+  Home: "orange",
+  Projects: "blue",
+  Evidence: "green",
+  Materials: "amber",
+  Deliveries: "blue",
+  RFIs: "violet",
+  Submittals: "orange",
+  "Daily logs": "amber",
+  Approvals: "green",
+  Issues: "red",
+  "Change orders": "orange",
+  Reports: "blue",
+  Team: "green",
+  Settings: "slate",
+  Inspections: "amber",
+  Risks: "red",
+  Finance: "green",
 };
 type InspectionReviewRow = {
   id: string;
@@ -209,6 +234,7 @@ function SidebarNavButton({
     <button
       aria-label={label}
       aria-current={active ? "page" : undefined}
+      data-suite-tone={suiteToneByLabel[label] ?? "slate"}
       onClick={onSelect}
       className={active ? "nav-active" : ""}
     >
@@ -235,6 +261,7 @@ export default function WorkspacePage() {
   const router = useRouter();
   const isOffline = useOffline();
   const [activeSection, setActiveSection] = useState("Home");
+  const [theme, setTheme] = useState<"light" | "dark">("light");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const sidebarRef = useRef<HTMLElement>(null);
@@ -273,6 +300,27 @@ export default function WorkspacePage() {
   >("connecting");
   const [queuedOperations, setQueuedOperations] = useState(0);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      try {
+        const savedTheme = window.localStorage.getItem("buildproof:workspace-theme");
+        if (savedTheme === "dark" || savedTheme === "light") {
+          setTheme(savedTheme);
+        }
+      } catch {
+        // Privacy settings can disable storage; the default light theme remains usable.
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.buildproofTheme = theme;
+    return () => {
+      delete document.documentElement.dataset.buildproofTheme;
+    };
+  }, [theme]);
 
   useEffect(() => {
     if (!currentUserId) return;
@@ -810,6 +858,18 @@ export default function WorkspacePage() {
       .getElementById(sectionTargets[label] ?? "workspace-overview")
       ?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
+
+  function toggleTheme() {
+    setTheme((currentTheme) => {
+      const nextTheme = currentTheme === "light" ? "dark" : "light";
+      try {
+        window.localStorage.setItem("buildproof:workspace-theme", nextTheme);
+      } catch {
+        // The choice still applies for this open workspace session.
+      }
+      return nextTheme;
+    });
+  }
   async function updateProjectStatus(
     nextStatus: "planning" | "active" | "on_hold" | "completed",
   ) {
@@ -892,6 +952,7 @@ export default function WorkspacePage() {
     <Tooltip.Provider delayDuration={250}>
       <main
         className={`workspace-page ${sidebarCollapsed ? "is-collapsed" : ""}`}
+        data-theme={theme}
       >
         <aside
           ref={sidebarRef}
@@ -957,6 +1018,15 @@ export default function WorkspacePage() {
               </div>
             ))}
           </nav>
+          <button
+            className="sidebar-theme-toggle"
+            aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
+            aria-pressed={theme === "dark"}
+            onClick={toggleTheme}
+          >
+            {theme === "light" ? <Moon size={17} /> : <Sun size={17} />}
+            <span>{theme === "light" ? "Use dark mode" : "Use light mode"}</span>
+          </button>
           <div className="sidebar-workspace-card">
             <span>{userInitials}</span>
             <p>
@@ -1078,7 +1148,7 @@ export default function WorkspacePage() {
               <div
                 className="header-progress-ring"
                 style={{
-                  background: `conic-gradient(#f97316 ${stats.progress * 3.6}deg, #e2e8f0 0deg)`,
+                  background: `conic-gradient(#f97316 ${stats.progress * 3.6}deg, ${theme === "dark" ? "#334155" : "#e2e8f0"} 0deg)`,
                 }}
               >
                 <i>{stats.progress}%</i>
@@ -1109,6 +1179,15 @@ export default function WorkspacePage() {
                   </DropdownMenu.Content>
                 </DropdownMenu.Portal>
               </DropdownMenu.Root>
+              <button
+                className="icon-action theme-action"
+                aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
+                aria-pressed={theme === "dark"}
+                title={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
+                onClick={toggleTheme}
+              >
+                {theme === "light" ? <Moon size={18} /> : <Sun size={18} />}
+              </button>
               <span className="avatar">{userInitials}</span>
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger asChild>
